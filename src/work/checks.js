@@ -240,3 +240,13 @@ export function waitConditionMet(watch, tasks, checksMet) {
             checksMet(watch.checks ?? [])),
     );
 }
+
+export function selfWaitTasks(condition, tasks, self, activeAction = false) {
+    if (activeAction || condition?.checks?.length || !condition?.tasks?.length) return [];
+    const watched = condition.tasks.map(id => tasks.find(t => t.id === id));
+    return watched.every(
+        t => t?.state === 'working' && t.owner?.toLowerCase() === self.toLowerCase() && !t.unmetDependencies?.length,
+    )
+        ? watched.map(t => t.id)
+        : [];
+}

@@ -2,9 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { Vec3 } from 'vec3';
-import { workChecks, validateWorkChecks, verifyWork } from '../../src/work/checks.js';
+import { workChecks, validateWorkChecks, verifyWork, selfWaitTasks } from '../../src/work/checks.js';
 import { validate } from '../../src/tools/game/schema.js';
 const bot = { entity: { position: { x: 0, y: 64, z: 0 } }, inventory: { items: () => [] } };
+
+test('a task wait cannot depend only on the idle owners own active work', () => {
+    const tasks = [
+        { id: 1, state: 'working', owner: 'Peter', unmetDependencies: [] },
+        { id: 2, state: 'working', owner: 'Chris' },
+    ];
+    assert.deepEqual(selfWaitTasks({ tasks: [1] }, tasks, 'Peter'), [1]);
+    assert.deepEqual(selfWaitTasks({ tasks: [1, 2] }, tasks, 'Peter'), []);
+    assert.deepEqual(selfWaitTasks({ tasks: [1], checks: [{ kind: 'inventory' }] }, tasks, 'Peter'), []);
+    assert.deepEqual(selfWaitTasks({ tasks: [1] }, tasks, 'Peter', true), []);
+    tasks[0].state = 'blocked';
+    assert.deepEqual(selfWaitTasks({ tasks: [1] }, tasks, 'Peter'), []);
+});
 
 test('area verification covers every wall cell from multiple viewpoints and keeps unseen distinct from wrong', async () => {
     const wall = new EventEmitter();

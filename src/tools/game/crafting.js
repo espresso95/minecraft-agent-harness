@@ -3,6 +3,19 @@ import { item } from './observation.js';
 import { SMELT_MS, requireFunction, settleInventory, untilAbort } from './runtime.js';
 import { choice, coords, count, integer, name } from './schema.js';
 
+function orderedRecipes(bot, recipes, count = 1) {
+    const available = new Map();
+    for (const i of bot.inventory.items()) available.set(i.name, (available.get(i.name) ?? 0) + i.count);
+    const missing = recipe =>
+        (recipe.delta ?? [])
+            .filter(d => d.count < 0)
+            .reduce((total, d) => {
+                const have = available.get(bot.registry.items[d.id]?.name) ?? 0;
+                return total + Math.max(0, -d.count * Math.ceil(count / (recipe.result?.count ?? 1)) - have);
+            }, 0);
+    return [...recipes].sort((a, b) => missing(a) - missing(b));
+}
+
 export function createCrafting(ctx) {
     ctx.add(
         'recipes',
@@ -12,7 +25,7 @@ export function createCrafting(ctx) {
             const { bot } = ctx,
                 entry = bot.registry.itemsByName[a.item];
             if (!entry) throw new Error('Unknown item in this Minecraft registry');
-            const choices = bot.recipesAll(entry.id, null, true),
+            const choices = orderedRecipes(bot, bot.recipesAll(entry.id, null, true), a.count ?? 1),
                 after = a.after ?? 0;
             const describe = d => ({
                 id: d.id,
@@ -161,7 +174,7 @@ export function createCrafting(ctx) {
                 if (!recipes.length) {
                     let needs = '';
                     try {
-                        const r = active.recipesAll?.(id, null, true)?.[0];
+                        const r = orderedRecipes(active, active.recipesAll?.(id, null, true) ?? [], want - crafted)[0];
                         const parts = (r?.delta ?? [])
                             .filter(d => d.count < 0)
                             .map(d => {
@@ -173,7 +186,7 @@ export function createCrafting(ctx) {
                                 return `${-d.count} ${n} (you have ${have})`;
                             });
                         if (parts.length)
-                            needs = ` One craft takes ${parts.join(', ')} and gives ${r.result?.count ?? 1}.`;
+                            needs = ` The closest recipe for your inventory takes ${parts.join(', ')} and gives ${r.result?.count ?? 1}. Other alternatives may use different materials; inspect recipes.`;
                     } catch {}
                     const why = `Not enough ingredients for ${itemName}.${needs}`;
                     if (crafted) {
@@ -222,7 +235,7 @@ export function createCrafting(ctx) {
         { item: name, count, keep_table: { type: 'boolean' } },
         (a, { bot: active, signal }) =>
             craftItems(active, a.item, a.count, signal, { keepTable: a.keep_table === true }),
-        { ...body, required: ['item', 'count'] },
+        { ...body, required: ['item', 'count'], complete: value => value.crafted >= value.requested },
     );
     add(
         'furnace',

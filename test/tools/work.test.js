@@ -163,6 +163,7 @@ test('recipe alternatives and totals come from the active registry without craft
             itemsByName: { some_output: { id: 7 } },
             items: { 7: { name: 'some_output' }, 9: { name: 'some_input' } },
         },
+        inventory: { items: () => [] },
         recipesAll: () => [
             {
                 result: { id: 7, count: 4 },
@@ -181,6 +182,49 @@ test('recipe alternatives and totals come from the active registry without craft
     assert.equal(r.details.recipes[0].repetitions, 5);
     assert.deepEqual(r.details.recipes[0].requiredTotals, [{ id: 9, name: 'some_input', count: 10 }]);
     assert.equal(crafted, 0);
+});
+
+test('recipe discovery and missing-material feedback prefer the agents actual inventory', async () => {
+    const bot = {
+        username: 'Worker',
+        game: { gameMode: 'survival' },
+        entity: { position: new Vec3(0, 65, 0) },
+        inventory: {
+            items: () => [
+                { name: 'oak_planks', count: 2 },
+                { name: 'stick', count: 4 },
+            ],
+            slots: [],
+        },
+        registry: {
+            itemsByName: { wooden_pickaxe: { id: 4 } },
+            items: {
+                1: { name: 'cherry_planks' },
+                2: { name: 'oak_planks' },
+                3: { name: 'stick' },
+                4: { name: 'wooden_pickaxe' },
+            },
+        },
+        recipesFor: () => [],
+        recipesAll: () =>
+            [1, 2].map(id => ({
+                result: { id: 4, count: 1 },
+                requiresTable: true,
+                delta: [
+                    { id, count: -3 },
+                    { id: 3, count: -2 },
+                    { id: 4, count: 1 },
+                ],
+            })),
+        clearControlStates() {},
+    };
+    const tools = createGameTools({ bot, world: { getNearestBlocks: () => [] } });
+    const recipes = await tools.find(t => t.name === 'recipes').execute('test', { item: 'wooden_pickaxe' });
+    assert.equal(recipes.details.recipes[0].ingredients[0].name, 'oak_planks');
+    const craft = await tools.find(t => t.name === 'craft').execute('test', { item: 'wooden_pickaxe', count: 1 });
+    assert.equal(craft.isError, true);
+    assert.match(craft.details.error, /3 oak_planks \(you have 2\)/);
+    assert.doesNotMatch(craft.details.error, /3 cherry_planks/);
 });
 
 test('planning and receipts avoid echoing large task definitions; exact details remain available on demand', async t => {

@@ -1,4 +1,4 @@
-import { knownChecksMet, waitConditionMet } from './work/checks.js';
+import { knownChecksMet, waitConditionMet, selfWaitTasks } from './work/checks.js';
 import { installRespawn } from './body/respawn.js';
 import { once } from 'node:events';
 import { installOxygenIsolation } from './body/oxygen.js';
@@ -536,6 +536,12 @@ export async function startAgent(settings, options = {}) {
                 let watch = null;
                 if (condition) {
                     const tasks = mailbox.tasks();
+                    const own = selfWaitTasks(condition, tasks, name, Boolean(actionRunner.status.active));
+                    if (own.length)
+                        return {
+                            requestedIdleUntil: null,
+                            reason: `This wait watches only your own active tasks (${own.join(', ')}), with no background action running. Continue their prerequisites, record an actual blocker, or watch an external task/material condition.`,
+                        };
                     const watched = (condition.tasks ?? []).map(id => {
                         const task = tasks.find(t => t.id === id);
                         if (!task) throw Error(`Unknown task #${id}`);
