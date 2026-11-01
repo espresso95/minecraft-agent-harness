@@ -216,19 +216,15 @@ export async function summarizeTeamEvaluation(root, scenarioOverride) {
         for (const r of requests.values())
             if (Number.isFinite(r.start))
                 thinkingMs += Math.max(0, Math.min(r.end ?? end, end) - Math.max(start, r.start));
-        let idleMs = 0,
-            idleWithReadyMs = 0,
-            readyKnown = false;
+        let idleMs = 0;
         for (let i = 0; i < samples.length; i++) {
             const at = Date.parse(samples[i].capturedAt),
                 next = Date.parse(samples[i + 1]?.capturedAt ?? new Date(end).toISOString()),
                 ms = Math.max(0, Math.min(next, end) - Math.max(at, start));
             const a = samples[i].agents.find(a => a.name === name);
             if (!a) continue;
-            if (a.work?.availability) readyKnown = true;
             if (a.status.phase === 'waiting' && !a.runtime?.action) {
                 idleMs += ms;
-                if (a.work?.availability?.ready > 0) idleWithReadyMs += ms;
             }
         }
         const programActions = tools.filter(
@@ -254,7 +250,6 @@ export async function summarizeTeamEvaluation(root, scenarioOverride) {
             ),
             modelPendingSeconds: thinkingMs / 1000,
             scheduledIdleSeconds: idleMs / 1000,
-            idleWithReadyWorkSeconds: readyKnown ? idleWithReadyMs / 1000 : null,
             bodyToolCalls: tools.filter(t => t.body ?? names.has(t.tool)).length,
             programBodyToolCalls: programActions.length,
             shellCalls: shells.length,

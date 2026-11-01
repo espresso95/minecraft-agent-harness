@@ -1,5 +1,5 @@
 import { workChecks } from '../work/checks.js';
-import { validate, object, integer as integerSchema } from './game/schema.js';
+import { validate, object } from './game/schema.js';
 import * as fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
@@ -10,10 +10,9 @@ import { createRequire } from 'node:module';
 
 const waitUntil = object(
     {
-        tasks: { type: 'array', maxItems: 32, items: integerSchema(1, Number.MAX_SAFE_INTEGER) },
-        checks: { ...workChecks, maxItems: 8 },
+        checks: { ...workChecks, minItems: 1, maxItems: 8 },
     },
-    [],
+    ['checks'],
 );
 
 const DEFAULTS = Object.freeze({
@@ -523,7 +522,7 @@ export async function createWorkspaceTools({
         tools.push(
             make(
                 'wait',
-                'Request idle time until a deadline. If shared work is ready but you cannot usefully proceed, give a concrete reason. Relevant events can wake you early; routine progress does not interrupt work.',
+                'Wait until a deadline, optionally waking when observed inventory, blocks or a known stockpile satisfy checks. Instructions can wake you early. Give a short reason when waiting on someone.',
                 schema(
                     {
                         seconds: { type: 'number', exclusiveMinimum: 0, maximum: limits.maxWaitMs / 1000 },
@@ -561,7 +560,7 @@ export async function createWorkspaceTools({
         tools.push(
             make(
                 'standby',
-                'Explicit standby until meaningful instructions or danger arrive. Use only when the human asked you to stand by and you have no unfinished assigned tasks. Ordinary quiet periods and ongoing work use wait for periodic reviews. Following and local safety checks continue. No model polling while on standby.',
+                'Explicit standby until meaningful instructions or danger arrive. Use only when the human asked you to stand by. Ordinary quiet periods and ongoing work use wait for periodic reviews. Following and local safety checks continue. No model polling while on standby.',
                 schema({}, []),
                 async args => {
                     assertArgs(args, []);

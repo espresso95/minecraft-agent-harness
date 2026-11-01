@@ -152,12 +152,7 @@ export function createSkillTools({
                 );
                 const success = !execution.isError && !signal?.aborted;
                 const verification = success
-                    ? await verifyWork(
-                          bot,
-                          perception,
-                          { revision: skill.id, checks: a.checks ?? [] },
-                          { inspectContainer, inspectBlock, signal },
-                      )
+                    ? await verifyWork(bot, perception, a.checks ?? [], { inspectContainer, inspectBlock, signal })
                     : {
                           at: new Date().toISOString(),
                           passed: false,

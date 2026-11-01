@@ -266,7 +266,7 @@ try {
     save('final-state.json', await call('/v1/state'));
     save('messages.json', await call('/v1/messages?limit=200'));
     try {
-        save('tasks.json', await call('/v1/tasks'));
+        save('work.json', await call('/v1/work'));
     } catch {}
     save('timing.json', {
         startedAt: new Date(startedAt).toISOString(),

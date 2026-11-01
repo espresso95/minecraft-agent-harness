@@ -9,7 +9,7 @@ import { createGameTools } from '../../src/tools/game-tools.js';
 import { canClearTerrain } from '../../src/tools/game/guards.js';
 import { installAsciiChat } from '../../src/body/chat.js';
 
-test('native completion checks observe the world and inventory; failed or invisible checks keep work open', async t => {
+test('standalone verification distinguishes missing, invisible and satisfied work without task bookkeeping', async t => {
     const dir = mkdtempSync(join(tmpdir(), 'work-tools-')),
         mailbox = new MailboxStore(join(dir, 'mail.sqlite'), 'Worker');
     t.after(() => {
@@ -29,82 +29,54 @@ test('native completion checks observe the world and inventory; failed or invisi
             clearControlStates() {},
         };
     const tools = createGameTools({ bot, mailbox, peers: ['Peer'], perception: { isBlockVisible: () => visible } });
-    const call = async (name, args) => {
-        const r = await tools.find(t => t.name === name).execute('test', args);
-        assert.equal(r.isError, undefined, r.content[0].text);
-        return r.details;
-    };
-    const plan = await call('work_plan', {
-        title: 'A human project',
-        tasks: [
-            {
-                key: 'place_and_keep',
-                title: 'Place a block and keep resources',
-                checks: [
-                    { kind: 'block', name: 'oak_planks', x: 1, y: 65, z: 1 },
-                    { kind: 'inventory', name: 'oak_log', count: 2 },
-                ],
-            },
-        ],
-    });
-    let task = plan.tasks[0];
-    task = await call('work_claim', { taskId: task.id, revision: task.revision });
-    const attempt = () =>
-        call('work_update', {
-            taskId: task.id,
-            revision: task.revision,
-            state: 'completed',
-            note: 'Checked the result',
-            timeout_ms: 120000,
-        });
-    assert.equal((await attempt()).completed, false);
+    const verify = async () =>
+        (
+            await tools
+                .find(t => t.name === 'verify')
+                .execute('test', {
+                    checks: [
+                        { kind: 'block', name: 'oak_planks', x: 1, y: 65, z: 1 },
+                        { kind: 'inventory', name: 'oak_log', count: 2 },
+                    ],
+                })
+        ).details;
+    assert.equal((await verify()).passed, false);
     blockName = 'oak_planks';
     count = 2;
     visible = false;
-    const hidden = await attempt();
-    assert.equal(hidden.completed, false);
-    assert.equal(hidden.verification.checks[0].observed, null);
+    const hidden = await verify();
+    assert.equal(hidden.passed, null);
+    assert.equal(hidden.checks[0].observed, null);
     visible = true;
-    const revisedCheck = await call('work_update', {
-        taskId: task.id,
-        revision: task.revision,
-        state: 'completed',
-        note: 'Check the submitted definition',
-        checks: [{ kind: 'inventory', name: 'oak_log', count: 3 }],
-    });
-    assert.equal(revisedCheck.completed, false);
-    const done = await attempt();
-    assert.equal(done.state, 'completed');
-    assert.equal(done.verification.passed, true);
-    assert.equal((await attempt()).revision, done.revision);
+    assert.equal((await verify()).passed, true);
+    assert.deepEqual(mailbox.work(), { goals: [], activities: [], resources: [] });
 });
 
-test('task details inherit the current project specification without copying it into task state', async t => {
-    const dir = mkdtempSync(join(tmpdir(), 'project-scope-'));
-    const mailbox = new MailboxStore(join(dir, 'mail.sqlite'), 'Worker');
+test('shared goals and status are optional and any teammate can update the agreed specification', async t => {
+    const dir = mkdtempSync(join(tmpdir(), 'work-tools-')),
+        file = join(dir, 'mail.sqlite');
+    const first = new MailboxStore(file, 'First'),
+        second = new MailboxStore(file, 'Second');
     t.after(() => {
-        mailbox.close();
+        first.close();
+        second.close();
         rmSync(dir, { recursive: true, force: true });
     });
-    const tools = createGameTools({ bot: { username: 'Worker' }, mailbox });
-    const run = async (name, args) => (await tools.find(t => t.name === name).execute('test', args)).details;
-    const plan = await run('work_plan', {
-        title: 'Base',
-        scope: 'Floor y65; bounds chosen by the team',
-        tasks: [{ key: 'wall', title: 'West wall', claim: true }],
-    });
-    assert.equal(plan.tasks[0].project.scope, plan.goal.scope);
-    await run('work_update', {
-        taskId: plan.goal.id,
-        revision: plan.goal.revision,
-        state: 'revised',
-        note: 'Surveyed a stepped site',
-        scope: 'Stepped floor y65 and y68 with connecting stairs',
-    });
-    const task = (await run('work_tasks', { id: plan.tasks[0].id })).tasks[0];
-    assert.match(task.project.scope, /Stepped floor/);
-    assert.notEqual(task.project.revision, plan.goal.revision);
-    assert.equal(mailbox.tasks().find(t => t.id === task.id).project, undefined);
+    const make = (name, mailbox) => createGameTools({ bot: { username: name }, mailbox, peers: ['First', 'Second'] });
+    const run = async (tools, name, args) => {
+        const result = await tools.find(t => t.name === name).execute('test', args);
+        assert.equal(result.isError, undefined, result.content[0].text);
+        return result.details;
+    };
+    const tools = make('First', first),
+        peerTools = make('Second', second);
+    const goal = await run(tools, 'shared_goal', { title: 'Base', scope: 'x10..19,z20..29,y65' });
+    await run(peerTools, 'shared_goal', { id: goal.id, scope: 'x10..19,z20..29,y65; oak walls' });
+    await run(peerTools, 'work_status', { status: 'working', activity: 'Gathering wood', goalId: goal.id });
+    const view = await run(tools, 'work_status', {});
+    assert.match(view.goals[0].scope, /oak walls/);
+    assert.equal(view.activities[0].agent, 'Second');
+    assert.equal(Object.hasOwn(view, 'ready'), false);
 });
 
 test('terrain policy protects constructed and unknown materials and persistent leaves without claiming ownership', () => {
@@ -225,44 +197,4 @@ test('recipe discovery and missing-material feedback prefer the agents actual in
     assert.equal(craft.isError, true);
     assert.match(craft.details.error, /3 oak_planks \(you have 2\)/);
     assert.doesNotMatch(craft.details.error, /3 cherry_planks/);
-});
-
-test('planning and receipts avoid echoing large task definitions; exact details remain available on demand', async t => {
-    const dir = mkdtempSync(join(tmpdir(), 'work-payload-')),
-        mailbox = new MailboxStore(join(dir, 'mail.sqlite'), 'Worker');
-    t.after(() => {
-        mailbox.close();
-        rmSync(dir, { recursive: true, force: true });
-    });
-    const bot = { username: 'Worker' },
-        tools = createGameTools({ bot, mailbox, peers: [] });
-    const call = async (name, args) => {
-        const r = await tools.find(t => t.name === name).execute('test', args);
-        assert.equal(r.isError, undefined, r.content[0].text);
-        return r.details;
-    };
-    const tasks = Array.from({ length: 8 }, (_, i) => ({
-        key: 'step' + i,
-        title: 'Meaningful task ' + i,
-        scope: 'An important constraint. '.repeat(70),
-        checks: [{ kind: 'inventory', name: 'oak_log', count: i + 1 }],
-    }));
-    const plan = await call('work_plan', { title: 'Project', tasks });
-    const list = await call('work_tasks', { goalId: plan.goal.id });
-    assert.ok(JSON.stringify(list).length < JSON.stringify(tasks).length / 2);
-    const detail = await call('work_tasks', { id: plan.tasks[0].id });
-    assert.equal(detail.tasks[0].scope, tasks[0].scope);
-    assert.deepEqual(detail.tasks[0].checks, tasks[0].checks);
-    const claimed = await call('work_claim', { taskId: plan.tasks[0].id, revision: plan.tasks[0].revision });
-    assert.equal(claimed.state, 'working');
-    assert.equal(claimed.scope, tasks[0].scope);
-    const receipt = await call('work_update', {
-        taskId: claimed.id,
-        revision: claimed.revision,
-        state: 'checkpoint',
-        note: 'Verified partial progress',
-        checkpoint: 'Verified partial progress',
-    });
-    assert.equal(receipt.state, 'working');
-    assert.equal('scope' in receipt, false);
 });

@@ -97,6 +97,8 @@ session wrapper as a model tool call (validation, budgets, telemetry) and return
 private DMs and the public chat each agent heard, with per-reader cursors. Unread counts appear in every observation.
 In single-agent mode a shared `plan.md` noticeboard is available through `read_plan` and `append_plan`.
 
+Shared objectives, personal activity reports and observed stockpiles are projected from that same mailbox event log. `shared_goal` and `work_status` provide optional context; they do not claim work, enforce dependencies or gate game actions. `verify` checks actual blocks, inventory and container contents independently. The controller supplies one Work view to the mod and web UI.
+
 ## Team mode
 
 With `minecraft-agent team`, agents share a state directory (so the mailbox is common), get each other's names, and

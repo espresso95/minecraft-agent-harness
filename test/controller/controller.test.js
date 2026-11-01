@@ -14,34 +14,29 @@ test('both clients receive one canonical work view without consuming private mes
     const { dir, call } = await fixture(t);
     const store = new MailboxStore(join(dir, 'shared/mailbox.sqlite'), 'Scout');
     t.after(() => store.close());
-    const goal = store.createTask({ kind: 'goal', title: 'Human project' });
-    let task = store.createTask({
+    const goal = store.setGoal({ title: 'Human project', scope: 'Preserve the garden' });
+    const report = store.reportWork({
         goalId: goal.id,
-        title: 'Collect supplies',
-        checks: [{ kind: 'inventory', name: 'birch_log', count: 6 }],
-    });
-    task = store.updateTask(task.id, { state: 'claimed', revision: task.revision, note: 'Started' });
-    task = store.updateTask(task.id, {
-        state: 'blocked',
-        revision: task.revision,
-        note: 'Need a reachable tree',
-        checkpoint: 'Two logs collected',
+        status: 'blocked',
+        activity: 'Two logs collected',
+        blocker: 'Need a reachable tree',
     });
     const human = new MailboxStore(join(dir, 'shared/mailbox.sqlite'), 'Player');
     human.sendDM('Scout', 'Preserve the garden');
     human.close();
     const { value: state } = await call('/v1/state');
-    const { value: raw } = await call('/v1/tasks');
-    assert.equal(raw.tasks.find(t => t.id === task.id).state, 'blocked');
-    const teamItem = state.work.items.find(t => t.id === task.id);
+    const { value: raw } = await call('/v1/work');
+    assert.equal(raw.activities[0].status, 'blocked');
+    const teamItem = state.work.items.find(t => t.id === report.id);
     assert.deepEqual(
-        state.agents.find(a => a.name === 'Scout').work.items.find(t => t.id === task.id),
+        state.agents.find(a => a.name === 'Scout').work.items.find(t => t.id === report.id),
         teamItem,
     );
     const fields = Object.fromEntries(teamItem.fields.map(f => [f.label, f.value]));
-    assert.equal(fields.Checkpoint, 'Two logs collected');
+    assert.equal(fields.Activity, 'Two logs collected');
     assert.equal(fields.Blocker, 'Need a reachable tree');
-    assert.equal(fields['Completion checks'], 'Inventory: at least 6 birch_log');
+    assert.equal(typeof teamItem.id, 'number');
+    assert.equal(state.agents[0].work.availability, undefined);
     assert.equal(store.unreadMessages().length, 1);
 });
 

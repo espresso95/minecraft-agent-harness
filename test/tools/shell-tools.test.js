@@ -82,34 +82,6 @@ test('a checked script batch stops on the first failed game action and preserves
     }
 });
 
-test('Python checkpoints use the current task revision and preserve progress between batches', async () => {
-    let revision = 4;
-    const notes = [];
-    const s = await setup(async (name, args) => {
-        if (name === 'work_tasks') return { tasks: [{ id: args.id, revision }] };
-        assert.equal(name, 'work_update');
-        assert.equal(args.taskId, 7);
-        assert.equal(args.revision, revision);
-        assert.equal(args.state, 'checkpoint');
-        assert.equal(args.checkpoint, args.note);
-        notes.push(args.note);
-        return { id: 7, revision: ++revision };
-    });
-    try {
-        const r = await s.run(
-            `python3 - <<'PY'\nfrom agent_tools import checkpoint\ncheckpoint(7, 'First section verified')\ncheckpoint(task_id=7, note='Second section verified')\nPY`,
-        );
-        assert.equal(r.isError, false, r.content[0].text);
-        assert.deepEqual(notes, ['First section verified', 'Second section verified']);
-        assert.deepEqual(
-            s.calls.map(c => c.name),
-            ['work_tasks', 'work_update', 'work_tasks', 'work_update'],
-        );
-    } finally {
-        await s.tool.close();
-    }
-});
-
 test('Python batches stop on a partial action and retain its progress data', async () => {
     const s = await setup(async () => ({ outcome: 'partial', placedCount: 1, requested: 3 }));
     try {

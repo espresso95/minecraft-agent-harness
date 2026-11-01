@@ -1239,6 +1239,314 @@
       }
     },
     {
+      "name": "verify",
+      "label": "verify",
+      "description": "Check actual inventory, shared container contents or blocks/regions in the visible world. Use container checks for shared deliveries and inventory checks for what you personally carry. Spatial checks may walk to safe viewpoints; unobserved is distinct from missing. This tool verifies facts without changing a goal or activity report.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "checks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "inventory"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "at_least"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "count"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "inventory"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "equal"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "count",
+                        "comparison"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "block"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_]+$"
+                    },
+                    "x": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "blocks"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_]+$"
+                    },
+                    "x1": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y1": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z1": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "x2": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y2": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z2": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "x1",
+                    "y1",
+                    "z1",
+                    "x2",
+                    "y2",
+                    "z2"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "x": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": -64,
+                          "maximum": 319
+                        },
+                        "z": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "at_least"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "z",
+                        "count"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "x": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": -64,
+                          "maximum": 319
+                        },
+                        "z": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "equal"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "z",
+                        "count",
+                        "comparison"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
+          }
+        },
+        "required": [
+          "checks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "post_chat",
       "label": "post chat",
       "description": "Post a brief announcement for everyone. Long text is split at word boundaries into game-sized messages. No slash commands, tool-command prose or newlines. Private DM text must not be disclosed here.",
@@ -2569,6 +2877,314 @@
           }
         },
         "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "verify",
+      "label": "verify",
+      "description": "Check actual inventory, shared container contents or blocks/regions in the visible world. Use container checks for shared deliveries and inventory checks for what you personally carry. Spatial checks may walk to safe viewpoints; unobserved is distinct from missing. This tool verifies facts without changing a goal or activity report.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "checks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "inventory"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "at_least"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "count"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "inventory"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "equal"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "count",
+                        "comparison"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "block"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_]+$"
+                    },
+                    "x": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "blocks"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_]+$"
+                    },
+                    "x1": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y1": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z1": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "x2": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y2": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z2": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "x1",
+                    "y1",
+                    "z1",
+                    "x2",
+                    "y2",
+                    "z2"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "x": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": -64,
+                          "maximum": 319
+                        },
+                        "z": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "at_least"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "z",
+                        "count"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "x": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": -64,
+                          "maximum": 319
+                        },
+                        "z": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "equal"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "z",
+                        "count",
+                        "comparison"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
+          }
+        },
+        "required": [
+          "checks"
+        ],
         "additionalProperties": false
       }
     },
@@ -3918,13 +4534,13 @@
       }
     },
     {
-      "name": "work_plan",
-      "label": "work plan",
-      "description": "Reuse the goal in your observation; goalId adds independent work and delegated handoffs to it. Otherwise create a human-authorized goal and task frontier atomically. sourceMessageId/sourceChatId deduplicates the human instruction. Use stable keys; after lists prerequisite keys, dependencies lists existing IDs. Depend only on what the next useful section needs, not all project materials or preparation. Define observable checks for quantities, deliveries and construction. claim:true begins your ready task in this call. Omit assignedTo for shared work; never assign the human. Plan meaningful checked chunks, not status steps.",
+      "name": "shared_goal",
+      "label": "shared goal",
+      "description": "Optionally record or revise the shared objective and agreed facts such as fixed build bounds, materials and interfaces. Any teammate can edit within the human instruction. Use id to change an existing goal. Creating requires title and scope; sourceMessageId or sourceChatId deduplicates a human broadcast. This is shared context, not a permission or action prerequisite.",
       "parameters": {
         "type": "object",
         "properties": {
-          "goalId": {
+          "id": {
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
@@ -3933,6 +4549,19 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 2000
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "completed",
+              "cancelled"
+            ]
           },
           "sourceMessageId": {
             "type": "integer",
@@ -3943,688 +4572,6 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
-          },
-          "scope": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 2000
-          },
-          "checks": {
-            "type": "array",
-            "minItems": 0,
-            "maxItems": 128,
-            "items": {
-              "anyOf": [
-                {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "enum": [
-                            "inventory"
-                          ]
-                        },
-                        "name": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_]+$"
-                        },
-                        "count": {
-                          "type": "integer",
-                          "minimum": 1,
-                          "maximum": 100000
-                        },
-                        "comparison": {
-                          "type": "string",
-                          "enum": [
-                            "at_least"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "name",
-                        "count"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "enum": [
-                            "inventory"
-                          ]
-                        },
-                        "name": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_]+$"
-                        },
-                        "count": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 100000
-                        },
-                        "comparison": {
-                          "type": "string",
-                          "enum": [
-                            "equal"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "name",
-                        "count",
-                        "comparison"
-                      ],
-                      "additionalProperties": false
-                    }
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "enum": [
-                        "block"
-                      ]
-                    },
-                    "name": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 64,
-                      "pattern": "^[a-z0-9_]+$"
-                    },
-                    "x": {
-                      "type": "integer",
-                      "minimum": -29999999,
-                      "maximum": 29999999
-                    },
-                    "y": {
-                      "type": "integer",
-                      "minimum": -64,
-                      "maximum": 319
-                    },
-                    "z": {
-                      "type": "integer",
-                      "minimum": -29999999,
-                      "maximum": 29999999
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "name",
-                    "x",
-                    "y",
-                    "z"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "enum": [
-                        "blocks"
-                      ]
-                    },
-                    "name": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 64,
-                      "pattern": "^[a-z0-9_]+$"
-                    },
-                    "x1": {
-                      "type": "integer",
-                      "minimum": -29999999,
-                      "maximum": 29999999
-                    },
-                    "y1": {
-                      "type": "integer",
-                      "minimum": -64,
-                      "maximum": 319
-                    },
-                    "z1": {
-                      "type": "integer",
-                      "minimum": -29999999,
-                      "maximum": 29999999
-                    },
-                    "x2": {
-                      "type": "integer",
-                      "minimum": -29999999,
-                      "maximum": 29999999
-                    },
-                    "y2": {
-                      "type": "integer",
-                      "minimum": -64,
-                      "maximum": 319
-                    },
-                    "z2": {
-                      "type": "integer",
-                      "minimum": -29999999,
-                      "maximum": 29999999
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "name",
-                    "x1",
-                    "y1",
-                    "z1",
-                    "x2",
-                    "y2",
-                    "z2"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "enum": [
-                            "container"
-                          ]
-                        },
-                        "name": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_]+$"
-                        },
-                        "x": {
-                          "type": "integer",
-                          "minimum": -29999999,
-                          "maximum": 29999999
-                        },
-                        "y": {
-                          "type": "integer",
-                          "minimum": -64,
-                          "maximum": 319
-                        },
-                        "z": {
-                          "type": "integer",
-                          "minimum": -29999999,
-                          "maximum": 29999999
-                        },
-                        "count": {
-                          "type": "integer",
-                          "minimum": 1,
-                          "maximum": 100000
-                        },
-                        "comparison": {
-                          "type": "string",
-                          "enum": [
-                            "at_least"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "name",
-                        "x",
-                        "y",
-                        "z",
-                        "count"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "enum": [
-                            "container"
-                          ]
-                        },
-                        "name": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_]+$"
-                        },
-                        "x": {
-                          "type": "integer",
-                          "minimum": -29999999,
-                          "maximum": 29999999
-                        },
-                        "y": {
-                          "type": "integer",
-                          "minimum": -64,
-                          "maximum": 319
-                        },
-                        "z": {
-                          "type": "integer",
-                          "minimum": -29999999,
-                          "maximum": 29999999
-                        },
-                        "count": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 100000
-                        },
-                        "comparison": {
-                          "type": "string",
-                          "enum": [
-                            "equal"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "name",
-                        "x",
-                        "y",
-                        "z",
-                        "count",
-                        "comparison"
-                      ],
-                      "additionalProperties": false
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          "tasks": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 16,
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 64
-                },
-                "title": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "after": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 64
-                  },
-                  "minItems": 0,
-                  "maxItems": 64
-                },
-                "claim": {
-                  "type": "boolean"
-                },
-                "dependencies": {
-                  "type": "array",
-                  "items": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
-                  },
-                  "minItems": 0,
-                  "maxItems": 64
-                },
-                "assignedTo": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 16,
-                  "pattern": "^[A-Za-z0-9_]+$",
-                  "description": "Exact registered agent from directory, never a human. Omit for shared work."
-                },
-                "scope": {
-                  "type": "string",
-                  "minLength": 0,
-                  "maxLength": 2000
-                },
-                "checks": {
-                  "type": "array",
-                  "minItems": 0,
-                  "maxItems": 128,
-                  "items": {
-                    "anyOf": [
-                      {
-                        "anyOf": [
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string",
-                                "enum": [
-                                  "inventory"
-                                ]
-                              },
-                              "name": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 64,
-                                "pattern": "^[a-z0-9_]+$"
-                              },
-                              "count": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 100000
-                              },
-                              "comparison": {
-                                "type": "string",
-                                "enum": [
-                                  "at_least"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "kind",
-                              "name",
-                              "count"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string",
-                                "enum": [
-                                  "inventory"
-                                ]
-                              },
-                              "name": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 64,
-                                "pattern": "^[a-z0-9_]+$"
-                              },
-                              "count": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 100000
-                              },
-                              "comparison": {
-                                "type": "string",
-                                "enum": [
-                                  "equal"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "kind",
-                              "name",
-                              "count",
-                              "comparison"
-                            ],
-                            "additionalProperties": false
-                          }
-                        ]
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "kind": {
-                            "type": "string",
-                            "enum": [
-                              "block"
-                            ]
-                          },
-                          "name": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 64,
-                            "pattern": "^[a-z0-9_]+$"
-                          },
-                          "x": {
-                            "type": "integer",
-                            "minimum": -29999999,
-                            "maximum": 29999999
-                          },
-                          "y": {
-                            "type": "integer",
-                            "minimum": -64,
-                            "maximum": 319
-                          },
-                          "z": {
-                            "type": "integer",
-                            "minimum": -29999999,
-                            "maximum": 29999999
-                          }
-                        },
-                        "required": [
-                          "kind",
-                          "name",
-                          "x",
-                          "y",
-                          "z"
-                        ],
-                        "additionalProperties": false
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "kind": {
-                            "type": "string",
-                            "enum": [
-                              "blocks"
-                            ]
-                          },
-                          "name": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 64,
-                            "pattern": "^[a-z0-9_]+$"
-                          },
-                          "x1": {
-                            "type": "integer",
-                            "minimum": -29999999,
-                            "maximum": 29999999
-                          },
-                          "y1": {
-                            "type": "integer",
-                            "minimum": -64,
-                            "maximum": 319
-                          },
-                          "z1": {
-                            "type": "integer",
-                            "minimum": -29999999,
-                            "maximum": 29999999
-                          },
-                          "x2": {
-                            "type": "integer",
-                            "minimum": -29999999,
-                            "maximum": 29999999
-                          },
-                          "y2": {
-                            "type": "integer",
-                            "minimum": -64,
-                            "maximum": 319
-                          },
-                          "z2": {
-                            "type": "integer",
-                            "minimum": -29999999,
-                            "maximum": 29999999
-                          }
-                        },
-                        "required": [
-                          "kind",
-                          "name",
-                          "x1",
-                          "y1",
-                          "z1",
-                          "x2",
-                          "y2",
-                          "z2"
-                        ],
-                        "additionalProperties": false
-                      },
-                      {
-                        "anyOf": [
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string",
-                                "enum": [
-                                  "container"
-                                ]
-                              },
-                              "name": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 64,
-                                "pattern": "^[a-z0-9_]+$"
-                              },
-                              "x": {
-                                "type": "integer",
-                                "minimum": -29999999,
-                                "maximum": 29999999
-                              },
-                              "y": {
-                                "type": "integer",
-                                "minimum": -64,
-                                "maximum": 319
-                              },
-                              "z": {
-                                "type": "integer",
-                                "minimum": -29999999,
-                                "maximum": 29999999
-                              },
-                              "count": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 100000
-                              },
-                              "comparison": {
-                                "type": "string",
-                                "enum": [
-                                  "at_least"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "kind",
-                              "name",
-                              "x",
-                              "y",
-                              "z",
-                              "count"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string",
-                                "enum": [
-                                  "container"
-                                ]
-                              },
-                              "name": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 64,
-                                "pattern": "^[a-z0-9_]+$"
-                              },
-                              "x": {
-                                "type": "integer",
-                                "minimum": -29999999,
-                                "maximum": 29999999
-                              },
-                              "y": {
-                                "type": "integer",
-                                "minimum": -64,
-                                "maximum": 319
-                              },
-                              "z": {
-                                "type": "integer",
-                                "minimum": -29999999,
-                                "maximum": 29999999
-                              },
-                              "count": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 100000
-                              },
-                              "comparison": {
-                                "type": "string",
-                                "enum": [
-                                  "equal"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "kind",
-                              "name",
-                              "x",
-                              "y",
-                              "z",
-                              "count",
-                              "comparison"
-                            ],
-                            "additionalProperties": false
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                },
-                "priority": {
-                  "type": "integer",
-                  "minimum": -100,
-                  "maximum": 100
-                }
-              },
-              "required": [
-                "key",
-                "title"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "tasks"
-        ],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "work_tasks",
-      "label": "work tasks",
-      "description": "List compact task records. id returns one full definition/checkpoint. Fresh observations already show current and ready work; do not reread the unchanged board. Claim returns the full definition. Revisions prevent stale decisions.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "goalId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "query": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 200
-          },
-          "after": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
           }
         },
         "required": [],
@@ -4632,103 +4579,56 @@
       }
     },
     {
-      "name": "work_claim",
-      "label": "work claim",
-      "description": "Atomically begin a ready task at its current revision and return its full definition/checkpoint. Only one agent can own it. No separate working status call is needed; act, then checkpoint meaningful progress. Verify saved progress before resuming.",
+      "name": "work_status",
+      "label": "work status",
+      "description": "Without arguments, read the full shared goals, teammates' latest activity and observed stockpiles. With status and activity, replace only your own progress report; goalId, blocker and evidence are optional. Report meaningful progress, a handoff or an actual blocker, not every action. Reports do not claim work, assign peers or gate tools; coordinate through DMs. Completion is a report, not independent verification.",
       "parameters": {
         "type": "object",
         "properties": {
-          "taskId": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "working",
+              "blocked",
+              "idle",
+              "completed"
+            ]
+          },
+          "activity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "goalId": {
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
           },
-          "revision": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
+          "blocker": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
           }
         },
-        "required": [
-          "taskId",
-          "revision"
-        ],
+        "required": [],
         "additionalProperties": false
       }
     },
     {
-      "name": "work_update",
-      "label": "work update",
-      "description": "Checkpoint, report a blocker, release, revise, cancel or complete work at its current revision. Completion runs fresh checks; failed checks leave the task open. Without checks, completion is explicitly reported, not independently verified. Only authors can revise definitions.",
+      "name": "verify",
+      "label": "verify",
+      "description": "Check actual inventory, shared container contents or blocks/regions in the visible world. Use container checks for shared deliveries and inventory checks for what you personally carry. Spatial checks may walk to safe viewpoints; unobserved is distinct from missing. This tool verifies facts without changing a goal or activity report.",
       "parameters": {
         "type": "object",
         "properties": {
-          "taskId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "revision": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "checkpoint",
-              "blocked",
-              "ready",
-              "revised",
-              "completed",
-              "cancelled"
-            ]
-          },
-          "note": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          },
-          "checkpoint": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 2000
-          },
-          "evidence": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 2000
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          },
-          "dependencies": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "minItems": 0,
-            "maxItems": 64
-          },
-          "assignedTo": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 16,
-            "pattern": "^[A-Za-z0-9_]+$",
-            "description": "Exact registered agent from directory, never a human. Omit for shared work."
-          },
-          "scope": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 2000
-          },
           "checks": {
             "type": "array",
-            "minItems": 0,
+            "minItems": 1,
             "maxItems": 128,
             "items": {
               "anyOf": [
@@ -5014,11 +4914,6 @@
                 }
               ]
             }
-          },
-          "priority": {
-            "type": "integer",
-            "minimum": -100,
-            "maximum": 100
           },
           "timeout_ms": {
             "type": "integer",
@@ -5027,10 +4922,7 @@
           }
         },
         "required": [
-          "taskId",
-          "revision",
-          "state",
-          "note"
+          "checks"
         ],
         "additionalProperties": false
       }

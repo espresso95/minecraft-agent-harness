@@ -1,3 +1,4 @@
+import { workContext } from '../../comms/work.js';
 import { abortError } from './failures.js';
 import { DOORISH, doorOpen } from './guards.js';
 import { requireFunction } from './runtime.js';
@@ -43,7 +44,7 @@ export function serializeObservation(state) {
         [snapshot, 'entities'],
         [snapshot.inventory, 'items'],
         [snapshot.recentPublicChat, 'messages'],
-        ...['goals', 'current', 'ready', 'blocked'].map(key => [snapshot.work, key]),
+        ...['goals', 'activities'].map(key => [snapshot.work, key]),
     ])
         if (parent && Object.hasOwn(parent, key)) parent[key] = observationTable(parent[key]);
     return JSON.stringify(snapshot);
@@ -91,7 +92,7 @@ export function createObservation({ bot, perception, world, captureFrame, mailbo
                 ? {
                       messaging: mailbox.summary(),
                       recentPublicChat: mailbox.recentChat(),
-                      ...(mailbox.work ? { work: mailbox.work() } : {}),
+                      ...(mailbox.work ? { work: workContext(mailbox.work()) } : {}),
                   }
                 : {}),
         };

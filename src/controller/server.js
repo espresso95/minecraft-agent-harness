@@ -94,9 +94,7 @@ export async function createCompanionController({
         function recoverWork(name) {
             const store = new MailboxStore(mailboxFile, name, { onCommit: routeMailbox });
             try {
-                store.recoverTasks(
-                    'The worker stopped. Verify the saved checkpoint and world before releasing or resuming this work.',
-                );
+                store.recoverWork('The worker stopped. Verify the current world and saved progress before resuming.');
             } finally {
                 store.close();
             }
@@ -159,10 +157,10 @@ export async function createCompanionController({
                     return json(res, 401, { error: 'Pair this device with the local controller' });
                 if (req.method === 'GET' && url.pathname === '/v1/models') return json(res, 200, catalog.snapshot());
                 if (req.method === 'GET' && url.pathname === '/v1/state') {
-                    const tasks = observer.tasks();
+                    const work = observer.work();
                     const snapshot = roster.snapshot().map(agent => ({
                         ...agent,
-                        work: workView(tasks, agent.name, agent.runtime?.waitReason, observer.resources()),
+                        work: workView(work, agent.name, agent.runtime?.waitReason),
                     }));
                     return json(res, 200, {
                         session,
@@ -171,7 +169,7 @@ export async function createCompanionController({
                         capturedAt: new Date().toISOString(),
                         server: { host: mcHost, port: mcPort, ...(serverRules?.snapshot() ?? { available: false }) },
                         agents: snapshot,
-                        work: workView(tasks, null, null, observer.resources()),
+                        work: workView(work),
                         participants: observer.participants(),
                         usage: ledger.totals(null, session),
                         lifetimeUsage: ledger.totals(null),
@@ -179,8 +177,7 @@ export async function createCompanionController({
                             'Reported tokens. Cached input is part of input; reasoning is part of output. Pending or interrupted requests are not zero-cost. Subscription deductions are not exposed here.',
                     });
                 }
-                if (req.method === 'GET' && url.pathname === '/v1/tasks')
-                    return json(res, 200, { tasks: observer.tasks() });
+                if (req.method === 'GET' && url.pathname === '/v1/work') return json(res, 200, observer.work());
                 if (req.method === 'GET' && url.pathname === '/v1/messages') {
                     const params = url.searchParams;
                     const filter = params.get('agentsOnly');
@@ -314,8 +311,9 @@ export async function createCompanionController({
         }, 1000);
         for (const name of new Set(
             observer
-                .tasks()
-                .map(t => t.owner)
+                .work()
+                .activities.filter(a => a.status === 'working')
+                .map(a => a.agent)
                 .filter(Boolean),
         ))
             recoverWork(name);

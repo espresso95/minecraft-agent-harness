@@ -104,7 +104,7 @@ export function createCore(ctx) {
                                           deposit: CHEST_MS,
                                           withdraw: CHEST_MS,
                                           inspect_block: CHEST_MS,
-                                          work_update: PLACE_LINE_MS,
+                                          verify: PLACE_LINE_MS,
                                       }[toolName],
                               })
                             : await invoke({ bot, signal });

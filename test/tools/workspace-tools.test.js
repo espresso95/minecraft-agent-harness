@@ -525,3 +525,18 @@ test('quota limits cannot be raised above defaults or disabled', async t => {
         await assert.rejects(createWorkspaceTools({ privateRoot: f.privateRoot, sharedRoot: f.sharedRoot, limits }));
     }
 });
+
+test('conditional waiting uses material checks without task claims and rejects empty or obsolete watches', async t => {
+    let condition;
+    const f = await fixture(t, {
+        onWait: (_until, _reason, watch) => {
+            condition = watch;
+            return { waiting: true };
+        },
+    });
+    const checks = [{ kind: 'inventory', name: 'oak_log', count: 4 }];
+    data(await f.call('wait', { seconds: 30, until: { checks } }));
+    assert.deepEqual(condition, { checks });
+    denied(await f.call('wait', { seconds: 30, until: { checks: [] } }));
+    denied(await f.call('wait', { seconds: 30, until: { tasks: [1] } }));
+});

@@ -2,22 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { Vec3 } from 'vec3';
-import { workChecks, validateWorkChecks, verifyWork, selfWaitTasks } from '../../src/work/checks.js';
+import { workChecks, validateWorkChecks, verifyWork } from '../../src/work/checks.js';
 import { validate } from '../../src/tools/game/schema.js';
 const bot = { entity: { position: { x: 0, y: 64, z: 0 } }, inventory: { items: () => [] } };
-
-test('a task wait cannot depend only on the idle owners own active work', () => {
-    const tasks = [
-        { id: 1, state: 'working', owner: 'Peter', unmetDependencies: [] },
-        { id: 2, state: 'working', owner: 'Chris' },
-    ];
-    assert.deepEqual(selfWaitTasks({ tasks: [1] }, tasks, 'Peter'), [1]);
-    assert.deepEqual(selfWaitTasks({ tasks: [1, 2] }, tasks, 'Peter'), []);
-    assert.deepEqual(selfWaitTasks({ tasks: [1], checks: [{ kind: 'inventory' }] }, tasks, 'Peter'), []);
-    assert.deepEqual(selfWaitTasks({ tasks: [1] }, tasks, 'Peter', true), []);
-    tasks[0].state = 'blocked';
-    assert.deepEqual(selfWaitTasks({ tasks: [1] }, tasks, 'Peter'), []);
-});
 
 test('area verification covers every wall cell from multiple viewpoints and keeps unseen distinct from wrong', async () => {
     const wall = new EventEmitter();
@@ -37,27 +24,22 @@ test('area verification covers every wall cell from multiple viewpoints and keep
         },
     };
     const checks = [{ kind: 'blocks', name: 'oak_planks', x1: 0, y1: 65, z1: 0, x2: 19, y2: 67, z2: 0 }];
-    const good = await verifyWork(wall, perception, { checks }, context);
+    const good = await verifyWork(wall, perception, checks, context);
     assert.equal(good.passed, true);
     assert.equal(good.checks[0].matched, 60);
     assert.ok(moves > 0 && moves < 10);
     assert.equal(wall.listenerCount('blockUpdate'), 0);
     missing = true;
-    const wrong = await verifyWork(wall, perception, { checks }, context);
+    const wrong = await verifyWork(wall, perception, checks, context);
     assert.equal(wrong.passed, false);
     assert.equal(wrong.checks[0].mismatched, 1);
     assert.equal(wrong.checks[0].unobserved, 0);
     viewable = false;
-    const unseen = await verifyWork(
-        wall,
-        perception,
-        { checks },
-        {
-            inspectBlock: async () => {
-                throw Error('No safe viewpoint');
-            },
+    const unseen = await verifyWork(wall, perception, checks, {
+        inspectBlock: async () => {
+            throw Error('No safe viewpoint');
         },
-    );
+    });
     assert.equal(unseen.passed, null);
     assert.equal(unseen.checks[0].unobserved, 60);
     assert.equal(unseen.checks[0].mismatched, 0);
@@ -72,25 +54,20 @@ test('verification invalidates observed cells that change during the pass and cl
     active.blockAt = p => ({ position: p, name: changed && p.x === 0 ? 'air' : 'oak_planks' });
     const perception = { isBlockVisible: (_b, b) => Math.abs(b.position.x - active.entity.position.x) <= 1 };
     const checks = [{ kind: 'blocks', name: 'oak_planks', x1: 0, y1: 65, z1: 0, x2: 4, y2: 65, z2: 0 }];
-    const r = await verifyWork(
-        active,
-        perception,
-        { checks },
-        {
-            inspectBlock: async cell => {
-                active.entity.position = new Vec3(cell.x, 65, 1);
-                if (!changed) {
-                    changed = true;
-                    active.emit('blockUpdate', null, { position: new Vec3(0, 65, 0) });
-                }
-            },
+    const r = await verifyWork(active, perception, checks, {
+        inspectBlock: async cell => {
+            active.entity.position = new Vec3(cell.x, 65, 1);
+            if (!changed) {
+                changed = true;
+                active.emit('blockUpdate', null, { position: new Vec3(0, 65, 0) });
+            }
         },
-    );
+    });
     assert.equal(r.passed, false);
     assert.equal(r.checks[0].mismatched, 1);
     const stop = new AbortController();
     stop.abort();
-    await assert.rejects(verifyWork(active, perception, { checks }, { signal: stop.signal }), { name: 'AbortError' });
+    await assert.rejects(verifyWork(active, perception, checks, { signal: stop.signal }), { name: 'AbortError' });
     assert.equal(active.listenerCount('blockUpdate'), 0);
 });
 test('published schemas and execution accept the same check forms, including exact zero', () => {
@@ -120,30 +97,22 @@ test('a container must actually contain the requested quantity; an existing ches
             return { chest: { x: 1, y: 64, z: 1 }, contents: { cobblestone: amount } };
         },
     };
-    const task = { revision: 5, checks: [{ kind: 'container', name: 'cobblestone', count: 64, x: 1, y: 64, z: 1 }] };
-    assert.equal((await verifyWork(bot, {}, task, context)).passed, false);
+    const checks = [{ kind: 'container', name: 'cobblestone', count: 64, x: 1, y: 64, z: 1 }];
+    assert.equal((await verifyWork(bot, {}, checks, context)).passed, false);
     amount = 64;
-    assert.equal((await verifyWork(bot, {}, task, context)).passed, true);
+    assert.equal((await verifyWork(bot, {}, checks, context)).passed, true);
     assert.equal(inspections, 2);
     assert.equal(
-        (await verifyWork(bot, {}, { checks: [{ kind: 'inventory', name: 'oak_log', count: 0, comparison: 'equal' }] }))
-            .passed,
+        (await verifyWork(bot, {}, [{ kind: 'inventory', name: 'oak_log', count: 0, comparison: 'equal' }])).passed,
         true,
     );
 });
 
-test('conditional waits react to meaningful task changes or known material conditions', async () => {
-    const { knownChecksMet, waitConditionMet } = await import('../../src/work/checks.js');
-    const tasks = [{ id: 1, attentionRevision: 5 }];
-    const watch = { tasks: { 1: 5 }, checks: [{ kind: 'container', name: 'oak_log', count: 5, x: 1, y: 64, z: 1 }] };
-    let resources = [];
-    const met = checks => knownChecksMet(bot, {}, checks, resources);
-    assert.equal(waitConditionMet(watch, tasks, met), false);
-    tasks[0].revision = 6;
-    assert.equal(waitConditionMet(watch, tasks, met), false);
-    resources = [{ dimension: 'overworld', location: { x: 1, y: 64, z: 1 }, contents: { oak_log: 5 } }];
-    assert.equal(waitConditionMet(watch, tasks, met), true);
-    resources = [];
-    tasks[0].attentionRevision = 7;
-    assert.equal(waitConditionMet(watch, tasks, met), true);
+test('conditional waits use observed material facts and distinguish dimensions', async () => {
+    const { knownChecksMet } = await import('../../src/work/checks.js');
+    const checks = [{ kind: 'container', name: 'oak_log', count: 5, x: 1, y: 64, z: 1 }];
+    assert.equal(knownChecksMet(bot, {}, checks, []), false);
+    const resource = { dimension: 'overworld', location: { x: 1, y: 64, z: 1 }, contents: { oak_log: 5 } };
+    assert.equal(knownChecksMet(bot, {}, checks, [resource]), true);
+    assert.equal(knownChecksMet(bot, {}, checks, [{ ...resource, dimension: 'the_nether' }]), false);
 });

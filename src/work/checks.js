@@ -101,10 +101,10 @@ export function validateWorkChecks(checks) {
         if (count > 4096) throw new Error('Verify at most 4096 block cells per bounded batch');
     }
 }
-export async function verifyWork(bot, perception, task, context = {}) {
-    validateWorkChecks(task.checks ?? []);
+export async function verifyWork(bot, perception, checks, context = {}) {
+    validateWorkChecks(checks);
     const targets = new Map(
-        (task.checks ?? []).filter(isSpatial).flatMap(check => [...cells(check)].map(cell => [cellKey(cell), cell])),
+        checks.filter(isSpatial).flatMap(check => [...cells(check)].map(cell => [cellKey(cell), cell])),
     );
     const observed = new Map(),
         attempted = new Set();
@@ -169,7 +169,7 @@ export async function verifyWork(bot, perception, task, context = {}) {
         scan();
         const results = [];
         const stores = new Map();
-        for (const check of task.checks ?? []) {
+        for (const check of checks) {
             context.signal?.throwIfAborted();
             if (isSpatial(check)) {
                 results.push(spatialResult(check));
@@ -201,10 +201,9 @@ export async function verifyWork(bot, perception, task, context = {}) {
             }
         }
         scan();
-        for (let i = 0; i < results.length; i++) if (isSpatial(results[i])) results[i] = spatialResult(task.checks[i]);
+        for (let i = 0; i < results.length; i++) if (isSpatial(results[i])) results[i] = spatialResult(checks[i]);
         return {
             at: new Date().toISOString(),
-            revision: task.revision,
             passed: verdict(results),
             checks: results,
             position: { ...bot.entity.position },
@@ -230,23 +229,4 @@ export function knownChecksMet(bot, perception, checks, resources = []) {
             return Boolean(resource && matches(resource.contents[check.name] ?? 0, check));
         })
     );
-}
-export function waitConditionMet(watch, tasks, checksMet) {
-    return Boolean(
-        watch &&
-        (Object.entries(watch.tasks ?? {}).some(
-            ([id, revision]) => tasks.find(t => t.id === Number(id))?.attentionRevision !== revision,
-        ) ||
-            checksMet(watch.checks ?? [])),
-    );
-}
-
-export function selfWaitTasks(condition, tasks, self, activeAction = false) {
-    if (activeAction || condition?.checks?.length || !condition?.tasks?.length) return [];
-    const watched = condition.tasks.map(id => tasks.find(t => t.id === id));
-    return watched.every(
-        t => t?.state === 'working' && t.owner?.toLowerCase() === self.toLowerCase() && !t.unmetDependencies?.length,
-    )
-        ? watched.map(t => t.id)
-        : [];
 }

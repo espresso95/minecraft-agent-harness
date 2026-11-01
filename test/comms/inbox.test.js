@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { MailboxStore, MailboxObserver } from '../../src/comms/mailbox-store.js';
 import { AgentInbox } from '../../src/comms/inbox.js';
 
@@ -52,8 +51,7 @@ test('75 unread messages all notify and drain in full only after successful mode
 
 test('checkpoints ignore routine progress and never consume new actionable messages', t => {
     const f = fixture(t);
-    const taskId = f.store.sendDM('Ada', 'Gather logs', { type: 'request' });
-    f.sender.sendDM('Bram', 'Working', { type: 'working', taskId });
+    f.sender.reportWork({ status: 'working', activity: 'Gathering logs' });
     assert.equal(f.inbox.shouldYield(), false);
     const id = f.sender.sendDM('Bram', 'Where is the chest?');
     assert.equal(f.inbox.shouldYield(), false);
@@ -104,36 +102,15 @@ test('UI history and notifications do not acknowledge messages; failure and rest
     assert.equal(f.observer.messages().messages[0].readByRecipient, true);
 });
 
-test('progress is passive, tasks and completion remain linked, urgency can interrupt', t => {
-    const f = fixture(t),
-        taskId = f.sender.sendDM('Bram', 'Gather 16 logs', { type: 'request' });
-    assert.deepEqual(f.store.unfinishedTasks(), [taskId]);
+test('activity reports stay outside mail and urgent coordination can interrupt', t => {
+    const f = fixture(t);
+    f.sender.reportWork({ status: 'working', activity: 'Gathering logs' });
     f.inbox.notify();
-    assert.equal(f.events.at(-1).options.wakeWhenIdle, true);
-    assert.equal(f.interrupts.length, 0);
-    f.store.readDMs();
-    assert.deepEqual(f.store.unfinishedTasks(), [taskId]);
-    f.sender.sendDM('Bram', 'Working on it', { type: 'working', taskId });
-    f.inbox.notify();
-    assert.equal(f.events.at(-1).options.passive, true);
-    assert.equal(f.events.at(-1).options.wakeWhenIdle, false);
+    assert.equal(f.events.length, 0);
+    assert.equal(f.observer.messages().messages.length, 0);
     f.sender.sendDM('Bram', 'Avoid the lava', { urgent: true });
     f.inbox.notify();
     assert.equal(f.interrupts.length, 1);
-    f.store.sendDM('Ada', 'Delivered exactly 16 logs', { type: 'completed', taskId });
-    assert.deepEqual(f.store.unfinishedTasks(), []);
-    assert.throws(() => f.store.sendDM('Other', 'Wrong task', { type: 'working', taskId }), /participants/);
-    assert.throws(() => f.store.sendDM('Ada', 'Still working', { type: 'working', taskId }), /already closed/);
-    assert.throws(() => f.store.sendDM('Ada', 'Accepted without a task', { type: 'accepted' }), /taskId/);
-});
-
-test('cancellation closes an abandoned assignment without claiming completion', t => {
-    const f = fixture(t);
-    const taskId = f.sender.sendDM('Bram', 'Build at spawn', { type: 'request' });
-    f.sender.sendDM('Bram', 'The human cancelled this build', { type: 'cancelled', taskId });
-    assert.deepEqual(f.store.unfinishedTasks(), []);
-    assert.throws(() => f.store.sendDM('Ada', 'Built', { type: 'completed', taskId }), /already closed/);
-    assert.equal(f.observer.messages().messages.at(-1).type, 'cancelled');
 });
 
 test('a sender cannot acknowledge another recipient and post-commit observers see complete writes', t => {
@@ -151,28 +128,11 @@ test('a sender cannot acknowledge another recipient and post-commit observers se
     try {
         writer.sendMany(['Bram', 'Ada'], 'Hi', 'commit-test-00001');
         assert.equal(notified, 1);
-        assert.throws(() => writer.sendDM('Bram', 'Bad task', { type: 'working', taskId: 999 }), /taskId/);
+        assert.throws(() => writer.sendDM('Bram', 'Bad task', { type: 'working', taskId: 999 }), /metadata/);
         assert.equal(notified, 1);
     } finally {
         writer.close();
     }
-});
-
-test('opening an existing mailbox preserves messages while adding metadata', t => {
-    const root = mkdtempSync(join(tmpdir(), 'old-mailbox-')),
-        file = join(root, 'old.sqlite'),
-        db = new DatabaseSync(file);
-    db.exec(
-        "CREATE TABLE mailbox_dm(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,text TEXT NOT NULL,createdAt INTEGER NOT NULL); INSERT INTO mailbox_dm VALUES(1,'Ada','Bram','KEEP ME',123)",
-    );
-    db.close();
-    const store = new MailboxStore(file, 'Bram');
-    t.after(() => {
-        store.close();
-        rmSync(root, { recursive: true, force: true });
-    });
-    assert.equal(store.unreadMessages()[0].text, 'KEEP ME');
-    assert.equal(store.unreadMessages()[0].id, 1);
 });
 
 test('peer chatter cannot hide a later human checkpoint or cancel message', t => {
@@ -183,32 +143,30 @@ test('peer chatter cannot hide a later human checkpoint or cancel message', t =>
     assert.equal(f.inbox.shouldYield(), true);
 });
 
-test('shared ready work wakes an idle peer once; working checkpoints stay passive', t => {
-    const f = fixture(t),
-        goal = f.sender.createTask({ kind: 'goal', title: 'A shared project' });
-    let task = f.sender.createTask({ goalId: goal.id, title: 'Independent ready work' });
+test('goal edits wake an idle peer once without interrupting; activity reports remain passive', t => {
+    const f = fixture(t);
+    const goal = f.sender.setGoal({ title: 'Base', scope: 'At spawn' });
     f.inbox.notify();
-    const count = f.events.length;
-    assert.ok(f.events.some(e => e.event.kind === 'work' && e.options.urgent && !e.options.interrupt));
+    assert.equal(f.events.length, 1);
+    assert.equal(f.events[0].options.wakeWhenIdle, true);
+    assert.equal(f.events[0].options.interrupt, false);
     f.inbox.notify();
-    assert.equal(f.events.length, count);
-    task = f.sender.updateTask(task.id, { state: 'claimed', revision: task.revision, note: 'claimed' });
+    assert.equal(f.events.length, 1);
+    f.sender.reportWork({ status: 'working', activity: 'Mining stone', goalId: goal.id });
     f.inbox.notify();
-    const afterClaim = f.events.length;
-    f.sender.updateTask(task.id, {
-        state: 'working',
-        revision: task.revision,
-        note: 'working',
-        checkpoint: 'A verified step',
-    });
+    assert.equal(f.events.length, 1);
+    f.sender.setGoal({ id: goal.id, scope: 'Fixed site (10,65,20)' });
     f.inbox.notify();
-    assert.equal(f.events.length, afterClaim);
+    assert.equal(f.events.length, 2);
     assert.equal(f.inbox.shouldYield(), false);
 });
 
 test('conditional waiting ignores unrelated work, wakes on its condition and still receives human instructions', t => {
     const f = fixture(t);
-    const runner = { waitFor: { tasks: { 1: 2 } }, enqueue: (event, options) => f.events.push({ event, options }) };
+    const runner = {
+        waitFor: { checks: [{ kind: 'inventory', name: 'stone', count: 4 }] },
+        enqueue: (event, options) => f.events.push({ event, options }),
+    };
     f.inbox.getRunner = () => runner;
     let met = false;
     f.inbox.checkWait = () => met;

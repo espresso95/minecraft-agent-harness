@@ -66,24 +66,15 @@ export class AgentInbox {
                     },
                     { key: 'condition', urgent: true, interrupt: false, wakeWhenIdle: true },
                 );
-            return;
         }
-        const initial = this.readySignature === undefined;
-        const signature = JSON.stringify([
-            work.attentionRevision,
-            work.ready.map(t => [t.id, t.revision]),
-            work.resources?.map(r => [r.key, r.contents]),
-        ]);
-        if (signature === this.readySignature) return;
-        this.readySignature = signature;
-        if (!work.readyCount && (initial || !work.attentionRevision)) return;
-        const busy = work.current.some(t => t.state !== 'blocked');
-        this.getRunner()?.enqueue(
-            {
-                kind: 'work',
-                text: `Shared work changed: ${JSON.stringify(work)}. Choose suitable work within the human's goal; claim it before acting. A ready task does not require leader approval.`,
-            },
-            { key: 'work', urgent: !busy, interrupt: false, wakeWhenIdle: !busy, passive: busy },
+        const signature = JSON.stringify(work.goals.map(g => [g.id, g.revision]));
+        const initial = this.goalSignature === undefined;
+        if (signature === this.goalSignature) return;
+        this.goalSignature = signature;
+        if (initial && !work.goals.some(g => g.state === 'active')) return;
+        runner?.enqueue(
+            { kind: 'work', text: 'The shared goal changed. Read it in your fresh observation and adjust your work.' },
+            { key: 'work', urgent: false, interrupt: false, wakeWhenIdle: true },
         );
     }
 

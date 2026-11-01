@@ -44,12 +44,6 @@ def call(name, arguments=None, **kwargs):
     return result
 
 
-def checkpoint(task_id, note):
-    """Save progress in the authoritative task record, not a second state file."""
-    task = call("work_tasks", id=task_id)["tasks"][0]
-    return call("work_update", taskId=task_id, revision=task["revision"], state="checkpoint", note=note, checkpoint=note)
-
-
 def parameters():
     value = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
     if not isinstance(value, dict):

@@ -1,25 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
-import { decodeMessage, messageMetadata, MESSAGE_TYPES } from './messages.js';
-import {
-    WorkProjection,
-    WORK_ROWS,
-    terminalTask,
-    taskMetadata,
-    validateTaskChange,
-    validateDependencies,
-    workOverview,
-    eligibleTask,
-} from './tasks.js';
+import { decodeMessage, messageMetadata } from './messages.js';
+import { WorkProjection, WORK_ROWS } from './work.js';
 import { SkillStore } from './skills.js';
 
 const NAME = /^[A-Za-z0-9_]{1,16}(?![\s\S])/;
-const typesWith = property =>
-    Object.keys(MESSAGE_TYPES)
-        .filter(type => MESSAGE_TYPES[type][property])
-        .map(type => `'${type}'`)
-        .join(',');
-const WAKING_TYPES = typesWith('wake');
+const CONVERSATION = "COALESCE(json_extract(d.metadata, '$.type'),'message') = 'message'";
 const DM_READ = `EXISTS (SELECT 1 FROM mailbox_dm_reads r
     WHERE r.owner = d.recipient AND r.peer = d.sender AND r.message_id = d.id)`;
 
@@ -67,7 +53,7 @@ export class MailboxStore {
     #self;
     #mention;
     #onCommit;
-    #tasks;
+    #work;
 
     constructor(file, self, { onCommit } = {}) {
         this.#self = validName(self);
@@ -124,18 +110,8 @@ export class MailboxStore {
                 );
             `),
             );
-            this.#transaction(() => {
-                if (
-                    !this.#db
-                        .prepare('PRAGMA table_info(mailbox_dm)')
-                        .all()
-                        .some(column => column.name === 'metadata')
-                )
-                    this.#db.exec("ALTER TABLE mailbox_dm ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'");
-            });
-            this.#db.exec('DROP INDEX IF EXISTS mailbox_task_events');
-            this.#db.exec(`CREATE INDEX IF NOT EXISTS mailbox_work_events ON mailbox_dm(id) WHERE ${WORK_ROWS}`);
-            this.#tasks = new WorkProjection(this.#db);
+            this.#db.exec(`CREATE INDEX IF NOT EXISTS mailbox_board_events ON mailbox_dm(id) WHERE ${WORK_ROWS}`);
+            this.#work = new WorkProjection(this.#db);
             this.skills = new SkillStore(this.#db, this.#self);
         } catch (error) {
             this.close();
@@ -151,7 +127,7 @@ export class MailboxStore {
             return result;
         } catch (error) {
             this.#db.exec('ROLLBACK');
-            this.#tasks?.invalidate();
+            this.#work?.invalidate();
             throw error;
         }
     }
@@ -160,32 +136,6 @@ export class MailboxStore {
         validName(to);
         validText(text);
         const metadata = messageMetadata(options);
-        if (metadata.taskId) {
-            const tasks = this.tasks(),
-                task = tasks.find(t => t.id === metadata.taskId);
-            if (
-                !task ||
-                (!task.shared &&
-                    !(
-                        (task.creator.toLowerCase() === sender.toLowerCase() &&
-                            task.recipient.toLowerCase() === to.toLowerCase()) ||
-                        (task.creator.toLowerCase() === to.toLowerCase() &&
-                            task.recipient.toLowerCase() === sender.toLowerCase())
-                    ))
-            )
-                throw new TypeError(
-                    'taskId must refer to a type=request between these participants. Ordinary message IDs are receipts, not task IDs; reply with type=message and omit taskId.',
-                );
-            const previous = this.#db.prepare('SELECT * FROM mailbox_dm WHERE id = ?').get(task.revision);
-            if (
-                previous.sender.toLowerCase() === sender.toLowerCase() &&
-                previous.recipient.toLowerCase() === to.toLowerCase() &&
-                previous.text === text &&
-                previous.metadata === JSON.stringify(metadata)
-            )
-                return previous.id;
-            validateTaskChange(tasks, task, metadata.type, sender, metadata.task);
-        }
         const result = this.#db
             .prepare(
                 `
@@ -194,11 +144,6 @@ export class MailboxStore {
             )
             .run(sender, to, text, Date.now(), JSON.stringify(metadata));
         const id = Number(result.lastInsertRowid);
-        if (metadata.type === 'request')
-            this.#db
-                .prepare('UPDATE mailbox_dm SET metadata = ? WHERE id = ?')
-                .run(JSON.stringify({ ...metadata, taskId: id }), id);
-        if (sender.toLowerCase() === to.toLowerCase() && (metadata.task || metadata.taskId)) this.#markRead([id]);
         return id;
     }
 
@@ -224,16 +169,7 @@ export class MailboxStore {
         const resource = { key: `${dimension}:${chest.x},${chest.y},${chest.z}`, dimension, location: chest, contents };
         return this.#committed(
             this.#transaction(() => {
-                const result = this.#db
-                    .prepare('INSERT INTO mailbox_dm (sender,recipient,text,createdAt,metadata) VALUES (?,?,?,?,?)')
-                    .run(
-                        this.#self,
-                        this.#self,
-                        'Container observed',
-                        Date.now(),
-                        JSON.stringify({ type: 'observation', resource }),
-                    );
-                this.#markRead([Number(result.lastInsertRowid)]);
+                this.#record('Container observed', { type: 'observation', resource });
                 return resource;
             }),
         );
@@ -303,7 +239,7 @@ export class MailboxStore {
                 `
             SELECT 'dm' AS kind, d.sender AS sender, count(*) AS count, 0 AS mentions
             FROM mailbox_dm d
-            WHERE d.recipient = ? AND NOT ${DM_READ} GROUP BY d.sender
+            WHERE d.recipient = ? AND ${CONVERSATION} AND NOT ${DM_READ} GROUP BY d.sender
             UNION ALL
             SELECT 'chat', '', count(*), coalesce(sum(mention), 0)
             FROM mailbox_chat WHERE observer = ? AND is_read = 0
@@ -325,11 +261,8 @@ export class MailboxStore {
             .prepare(
                 `
             SELECT d.* FROM mailbox_dm d
-            WHERE d.recipient = ? AND d.id > ? AND NOT ${DM_READ} ORDER BY ${
-                priority
-                    ? `coalesce(json_extract(d.metadata, '$.urgent'), 0) DESC,
-                (coalesce(json_extract(d.metadata, '$.type'), 'message') IN (${WAKING_TYPES})) DESC, `
-                    : ''
+            WHERE d.recipient = ? AND ${CONVERSATION} AND d.id > ? AND NOT ${DM_READ} ORDER BY ${
+                priority ? `coalesce(json_extract(d.metadata, '$.urgent'), 0) DESC, ` : ''
             }d.id LIMIT ?
         `,
             )
@@ -349,28 +282,22 @@ export class MailboxStore {
         this.#transaction(() => this.#markRead(ids));
     }
 
-    unfinishedTasks() {
-        return this.tasks()
-            .filter(
-                t =>
-                    !terminalTask(t) &&
-                    [t.owner, t.assignedTo].some(n => n?.toLowerCase() === this.#self.toLowerCase()),
-            )
-            .map(t => t.id);
-    }
-
-    tasks() {
-        return this.#tasks.snapshot().tasks;
+    work() {
+        return this.#work.snapshot();
     }
 
     resources() {
-        return this.#tasks.snapshot().resources;
-    }
-    work() {
-        return { ...workOverview(this.tasks(), this.#self), resources: this.resources().slice(0, 12) };
+        return this.work().resources;
     }
 
-    taskSource(messageId) {
+    #record(text, metadata) {
+        const result = this.#db
+            .prepare('INSERT INTO mailbox_dm (sender,recipient,text,createdAt,metadata) VALUES (?,?,?,?,?)')
+            .run(this.#self, this.#self, text, Date.now(), JSON.stringify(metadata));
+        return Number(result.lastInsertRowid);
+    }
+
+    messageSource(messageId) {
         const row = this.#db
             .prepare('SELECT * FROM mailbox_dm WHERE id = ? AND recipient = ?')
             .get(messageId, this.#self);
@@ -397,189 +324,102 @@ export class MailboxStore {
                 .run(goalId, source.sender, source.text);
     }
 
-    #createTask({ title, kind = 'task', sourceMessageId, sourceChatId, ...definition }) {
-        validText(title);
+    setGoal({ id, title, scope, state, sourceMessageId, sourceChatId }) {
+        for (const value of [title, scope]) if (value !== undefined) validText(value);
+        if (state !== undefined && !['active', 'completed', 'cancelled'].includes(state))
+            throw new TypeError('Invalid goal state');
+        if (id !== undefined && (!Number.isSafeInteger(id) || id < 1)) throw new TypeError('Invalid goal ID');
         if (sourceMessageId !== undefined && sourceChatId !== undefined)
             throw new TypeError('Choose one instruction source');
-        const chat = sourceChatId !== undefined ? this.chatSource(sourceChatId) : null;
-        if (chat) {
-            if (kind !== 'goal') throw new TypeError('Only goals reference source instructions');
-            const linked = this.#db
-                .prepare('SELECT goal_id FROM mailbox_chat_goals WHERE message_id = ?')
-                .get(sourceChatId);
-            if (linked) return this.tasks().find(t => t.id === linked.goal_id);
-            definition.source =
-                'chat:' +
-                createHash('sha256')
-                    .update(JSON.stringify([chat.sender.toLowerCase(), chat.text]))
-                    .digest('hex');
-        }
-        if (sourceMessageId !== undefined) {
-            if (kind !== 'goal') throw new TypeError('Only goals reference source instructions');
-            this.taskSource(sourceMessageId);
-            const submission = this.#db
-                .prepare('SELECT s.id FROM mailbox_submissions s, json_each(s.message_ids) m WHERE m.value = ?')
-                .get(sourceMessageId);
-            definition.source = submission ? `submission:${submission.id}` : `message:${sourceMessageId}`;
-        }
-        const task = taskMetadata({ ...definition, kind, shared: true, assignedTo: definition.assignedTo ?? null });
-        const tasks = this.tasks();
-        const existing =
-            kind === 'goal' &&
-            task.source &&
-            tasks.find(t => t.kind === 'goal' && t.source === task.source && (!chat || !terminalTask(t)));
-        if (existing) {
-            this.#linkChat(chat, existing.id);
-            return existing;
-        }
-        if (kind === 'task' && !tasks.some(t => t.id === task.goalId && t.kind === 'goal' && !terminalTask(t)))
-            throw new TypeError('Create or choose an active goal first');
-        if (kind === 'goal' && (task.goalId || task.dependencies?.length))
-            throw new TypeError('A goal cannot have a parent or task dependencies');
-        validateDependencies(tasks, -1, task.dependencies ?? [], task.goalId);
-        const id = this.#insertDM(this.#self, this.#self, title, { type: 'request', task });
-        this.#linkChat(chat, id);
-        return this.tasks().find(t => t.id === id);
-    }
-
-    createTask(definition) {
-        return this.#committed(this.#transaction(() => this.#createTask(definition)));
-    }
-
-    planWork({ goalId, title, sourceMessageId, sourceChatId, scope, checks, tasks: specifications }) {
-        if (
-            !Array.isArray(specifications) ||
-            !specifications.length ||
-            specifications.length > 16 ||
-            new Set(specifications.map(t => t.key)).size !== specifications.length
-        )
-            throw new TypeError('Plan 1-16 tasks with unique keys');
+        if (id && (sourceMessageId !== undefined || sourceChatId !== undefined))
+            throw new TypeError('A goal keeps its instruction source');
         return this.#committed(
             this.#transaction(() => {
-                const previous = this.tasks();
-                const goal = goalId
-                    ? previous.find(t => t.id === goalId && t.kind === 'goal')
-                    : this.#createTask({
-                          kind: 'goal',
-                          title,
-                          sourceMessageId,
-                          sourceChatId,
-                          ...(scope !== undefined ? { scope } : {}),
-                          ...(checks !== undefined ? { checks } : {}),
-                      });
-                if (!goal) throw new TypeError('Unknown goal');
-                const existing = previous.filter(t => t.goalId === goal.id);
-                if (!goalId && previous.some(t => t.id === goal.id)) return { goal, tasks: existing };
-                if (terminalTask(goal) || goal.state === 'blocked') throw new TypeError('Choose an active goal');
-                const byKey = new Map(existing.filter(t => t.key).map(t => [t.key, t]));
-                const pending = [];
-                for (const spec of specifications) {
-                    if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(spec.key))
-                        throw new TypeError('Use a stable task key of at most 64 characters');
-                    if (byKey.has(spec.key)) {
-                        const current = byKey.get(spec.key);
-                        const { after = [], claim, ...definition } = spec;
-                        const expectedDependencies = [
-                            ...new Set([...(definition.dependencies ?? []), ...after.map(key => byKey.get(key)?.id)]),
-                        ];
-                        const sameDependencies =
-                            JSON.stringify([...current.dependencies].sort((a, b) => a - b)) ===
-                            JSON.stringify(expectedDependencies.sort((a, b) => a - b));
-                        if (
-                            !sameDependencies ||
-                            Object.entries(definition).some(
-                                ([k, v]) => k !== 'dependencies' && JSON.stringify(current[k]) !== JSON.stringify(v),
-                            )
-                        )
-                            throw new TypeError('Task key already exists; inspect and revise that task by ID');
-                    } else pending.push(spec);
+                const goals = this.work().goals;
+                if (id) {
+                    const goal = goals.find(g => g.id === id);
+                    if (!goal) throw new TypeError('Unknown goal');
+                    const patch = Object.fromEntries(
+                        Object.entries({ title, scope, state }).filter(
+                            ([key, value]) => value !== undefined && value !== goal[key],
+                        ),
+                    );
+                    if (Object.keys(patch).length)
+                        this.#record(title ?? goal.title, { type: 'revised', taskId: id, task: patch });
+                    return this.work().goals.find(g => g.id === id);
                 }
-                while (pending.length) {
-                    const index = pending.findIndex(t => (t.after ?? []).every(key => byKey.has(key)));
-                    if (index < 0) throw new TypeError('Plan dependencies contain a cycle or unknown key');
-                    const { after = [], claim = false, ...definition } = pending.splice(index, 1)[0];
-                    const dependencies = [
-                        ...new Set([...(definition.dependencies ?? []), ...after.map(key => byKey.get(key).id)]),
-                    ];
-                    let task = this.#createTask({ ...definition, goalId: goal.id, dependencies });
-                    if (claim && eligibleTask(task, this.#self)) {
-                        this.#insertDM(this.#self, this.#self, 'Work started', {
-                            type: 'accepted',
-                            taskId: task.id,
-                            task: {},
-                        });
-                        task = this.tasks().find(t => t.id === task.id);
-                    }
-                    byKey.set(task.key, task);
+                validText(title);
+                validText(scope);
+                const chat = sourceChatId !== undefined ? this.chatSource(sourceChatId) : null;
+                let source;
+                if (chat) {
+                    const linked = this.#db
+                        .prepare('SELECT goal_id FROM mailbox_chat_goals WHERE message_id = ?')
+                        .get(sourceChatId);
+                    if (linked) return goals.find(g => g.id === linked.goal_id);
+                    source =
+                        'chat:' +
+                        createHash('sha256')
+                            .update(JSON.stringify([chat.sender.toLowerCase(), chat.text]))
+                            .digest('hex');
                 }
-                return { goal, tasks: specifications.map(t => byKey.get(t.key)) };
+                if (sourceMessageId !== undefined) {
+                    this.messageSource(sourceMessageId);
+                    const submission = this.#db
+                        .prepare('SELECT s.id FROM mailbox_submissions s, json_each(s.message_ids) m WHERE m.value = ?')
+                        .get(sourceMessageId);
+                    source = submission ? `submission:${submission.id}` : `message:${sourceMessageId}`;
+                }
+                const existing = source && goals.find(g => g.source === source && (!chat || g.state === 'active'));
+                if (existing) {
+                    this.#linkChat(chat, existing.id);
+                    return existing;
+                }
+                const goalId = this.#record(title, {
+                    type: 'request',
+                    task: { kind: 'goal', shared: true, scope, source, state: state ?? 'active' },
+                });
+                this.#linkChat(chat, goalId);
+                return this.work().goals.find(g => g.id === goalId);
             }),
         );
     }
 
-    updateTask(taskId, { state, note, revision, ...patch }) {
-        const types = {
-            claimed: 'accepted',
-            working: 'working',
-            blocked: 'blocked',
-            completed: 'completed',
-            cancelled: 'cancelled',
-            ready: 'released',
-            revised: 'revised',
-        };
-        if (!Object.hasOwn(types, state)) throw new TypeError('Unknown task state');
-        validText(note);
-        taskMetadata(patch);
+    reportWork({ goalId, status, activity, blocker, evidence }) {
+        if (!['working', 'blocked', 'idle', 'completed'].includes(status))
+            throw new TypeError('Invalid activity status');
+        validText(activity);
+        if (blocker !== undefined) validText(blocker);
+        if (evidence !== undefined) validText(evidence);
+        if (status === 'blocked' && !blocker) throw new TypeError('Describe the actual blocker');
+        if (status !== 'blocked' && blocker !== undefined) throw new TypeError('Only blocked activity has a blocker');
         return this.#committed(
             this.#transaction(() => {
-                const tasks = this.tasks(),
-                    task = tasks.find(t => t.id === taskId);
-                if (!task) throw new TypeError('Unknown task ID');
-                {
-                    const last = this.#db.prepare('SELECT * FROM mailbox_dm WHERE id = ?').get(task.revision);
-                    const metadata = JSON.parse(last.metadata);
-                    if (
-                        last.sender.toLowerCase() === this.#self.toLowerCase() &&
-                        last.text === note &&
-                        metadata.type === types[state] &&
-                        Object.entries(patch).every(
-                            ([key, value]) =>
-                                key === 'verification' ||
-                                JSON.stringify(metadata.task?.[key]) === JSON.stringify(value),
-                        )
-                    )
-                        return task;
-                }
-                if (revision !== task.revision) {
-                    throw new TypeError('Task changed; read the current revision before acting');
-                }
-                const to = !task.shared
-                    ? task.creator.toLowerCase() === this.#self.toLowerCase()
-                        ? task.recipient
-                        : task.creator
-                    : ['cancelled', 'revised'].includes(state) &&
-                        task.owner &&
-                        task.owner.toLowerCase() !== this.#self.toLowerCase()
-                      ? task.owner
-                      : this.#self;
-                this.#insertDM(this.#self, to, note, { type: types[state], taskId, task: patch });
-                if (state === 'cancelled' && task.kind === 'goal')
-                    for (const child of tasks.filter(t => t.goalId === taskId && !terminalTask(t)))
-                        this.#insertDM(this.#self, child.owner ?? child.assignedTo ?? this.#self, note, {
-                            type: 'cancelled',
-                            taskId: child.id,
-                            task: {},
-                        });
-                return this.tasks().find(t => t.id === taskId);
+                if (goalId !== undefined && !this.work().goals.some(g => g.id === goalId))
+                    throw new TypeError('Unknown goal');
+                const value = {
+                    status,
+                    activity,
+                    ...(goalId !== undefined ? { goalId } : {}),
+                    ...(blocker ? { blocker } : {}),
+                    ...(evidence ? { evidence } : {}),
+                };
+                const previous = this.work().activities.find(a => a.agent.toLowerCase() === this.#self.toLowerCase());
+                const previousValue =
+                    previous &&
+                    Object.fromEntries(
+                        Object.entries(previous).filter(([key]) => !['id', 'agent', 'updatedAt'].includes(key)),
+                    );
+                if (JSON.stringify(previousValue) !== JSON.stringify(value))
+                    this.#record(activity, { type: 'activity', activity: value });
+                return this.work().activities.find(a => a.agent.toLowerCase() === this.#self.toLowerCase());
             }),
         );
     }
 
-    recoverTasks(reason) {
-        for (const task of this.tasks().filter(
-            t => t.owner?.toLowerCase() === this.#self.toLowerCase() && !terminalTask(t),
-        ))
-            this.updateTask(task.id, { state: 'blocked', revision: task.revision, note: reason, release: true });
+    recoverWork(reason) {
+        const activity = this.work().activities.find(a => a.agent.toLowerCase() === this.#self.toLowerCase());
+        if (activity?.status === 'working') this.reportWork({ ...activity, status: 'blocked', blocker: reason });
     }
 
     readDMs(peer = '', after = -1, limit = 20) {
@@ -596,7 +436,7 @@ export class MailboxStore {
                 .prepare(
                     `
                 SELECT d.* FROM mailbox_dm d
-                WHERE (${where}) AND COALESCE(json_extract(d.metadata, '$.type'),'message') != 'observation'${peerFilter} ORDER BY d.id LIMIT ?
+                WHERE (${where}) AND ${CONVERSATION}${peerFilter} ORDER BY d.id LIMIT ?
             `,
                 )
                 .all(...params, limit + 1);
@@ -669,24 +509,18 @@ export class MailboxStore {
 
 export class MailboxObserver {
     #db;
-    #tasks;
+    #work;
     constructor(file) {
         this.#db = new DatabaseSync(file, { readOnly: true });
         this.#db.exec('PRAGMA busy_timeout = 3000');
-        this.#tasks = new WorkProjection(this.#db);
+        this.#work = new WorkProjection(this.#db);
     }
-    tasks() {
-        return this.#tasks.snapshot().tasks;
-    }
-    resources() {
-        return this.#tasks.snapshot().resources;
-    }
-    work(name) {
-        return { ...workOverview(this.tasks(), name), resources: this.resources().slice(0, 12) };
+    work() {
+        return this.#work.snapshot();
     }
     workRevision() {
-        this.tasks();
-        return this.#tasks.revision;
+        this.work();
+        return this.#work.revision;
     }
     participants() {
         return this.#db
@@ -703,7 +537,7 @@ export class MailboxObserver {
 
     unreadRecipients() {
         return this.#db
-            .prepare(`SELECT DISTINCT d.recipient AS name FROM mailbox_dm d WHERE NOT ${DM_READ}`)
+            .prepare(`SELECT DISTINCT d.recipient AS name FROM mailbox_dm d WHERE ${CONVERSATION} AND NOT ${DM_READ}`)
             .all()
             .map(row => row.name);
     }
@@ -729,10 +563,7 @@ export class MailboxObserver {
             throw new TypeError('Invalid message cursor or agent filter');
         const names = [...new Set(agents.map(validName))];
         const conversation = '(d.sender IN (SELECT name FROM agents) AND d.recipient IN (SELECT name FROM agents))';
-        const where = [
-                "NOT (d.sender = d.recipient AND json_type(d.metadata, '$.task') IS NOT NULL)",
-                "COALESCE(json_extract(d.metadata, '$.type'),'message') != 'observation'",
-            ],
+        const where = [CONVERSATION],
             params = [];
         if (agentsOnly) where.push(conversation);
         if (after !== undefined) {

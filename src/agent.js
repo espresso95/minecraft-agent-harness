@@ -1,4 +1,4 @@
-import { knownChecksMet, waitConditionMet, selfWaitTasks } from './work/checks.js';
+import { knownChecksMet } from './work/checks.js';
 import { installRespawn } from './body/respawn.js';
 import { once } from 'node:events';
 import { installOxygenIsolation } from './body/oxygen.js';
@@ -170,7 +170,7 @@ export async function startAgent(settings, options = {}) {
         try {
             checkpoint();
             if (!process.send)
-                mailbox?.recoverTasks(
+                mailbox?.recoverWork(
                     'The worker stopped. Verify the saved checkpoint and world before resuming this work.',
                 );
             mailbox?.close();
@@ -325,10 +325,7 @@ export async function startAgent(settings, options = {}) {
             store: mailbox,
             peers,
             getRunner: () => runner,
-            checkWait: watch =>
-                waitConditionMet(watch, mailbox.tasks(), checks =>
-                    knownChecksMet(bot, perception, checks, mailbox.resources()),
-                ),
+            checkWait: watch => knownChecksMet(bot, perception, watch.checks ?? [], mailbox.resources()),
             actions: actionRunner,
             record,
         });
@@ -533,52 +530,12 @@ export async function startAgent(settings, options = {}) {
             privateRoot: workspaceRoots.private,
             sharedRoot: workspaceRoots.shared,
             onWait: (until, reason, condition) => {
-                let watch = null;
-                if (condition) {
-                    const tasks = mailbox.tasks();
-                    const own = selfWaitTasks(condition, tasks, name, Boolean(actionRunner.status.active));
-                    if (own.length)
-                        return {
-                            requestedIdleUntil: null,
-                            reason: `This wait watches only your own active tasks (${own.join(', ')}), with no background action running. Continue their prerequisites, record an actual blocker, or watch an external task/material condition.`,
-                        };
-                    const watched = (condition.tasks ?? []).map(id => {
-                        const task = tasks.find(t => t.id === id);
-                        if (!task) throw Error(`Unknown task #${id}`);
-                        return [id, task.attentionRevision];
-                    });
-                    watch = { tasks: Object.fromEntries(watched), checks: condition.checks ?? [] };
-                    if (
-                        waitConditionMet(watch, tasks, checks =>
-                            knownChecksMet(bot, perception, checks, mailbox.resources()),
-                        )
-                    )
-                        return { conditionMet: true, requestedIdleUntil: null };
-                }
-                const work = mailbox.work();
-                if (
-                    work.readyCount &&
-                    !reason &&
-                    !work.current.some(t => t.state !== 'blocked') &&
-                    !actionRunner.status.active
-                )
-                    return {
-                        requestedIdleUntil: null,
-                        reason: 'Shared work is ready. Claim suitable work, record a blocker, or give a concrete waiting reason.',
-                        work,
-                    };
+                const watch = condition ? { checks: condition.checks } : null;
+                if (watch && knownChecksMet(bot, perception, watch.checks, mailbox.resources()))
+                    return { conditionMet: true, requestedIdleUntil: null };
                 return runner.requestWait(until, reason, watch);
             },
-            onStandby: () => {
-                const unfinishedTaskIds = mailbox.unfinishedTasks();
-                if (unfinishedTaskIds.length || mailbox.work().readyCount)
-                    return {
-                        standby: false,
-                        unfinishedTaskIds,
-                        reason: 'Finish or cancel your assigned tasks before standby. Use wait for periodic reviews.',
-                    };
-                return runner.requestStandby();
-            },
+            onStandby: () => runner.requestStandby(),
         });
         const tools = [...gameTools, ...workspaceTools];
         if (team) tools.push(...createDirectoryTools({ bot, peers, self: name }));
