@@ -67,7 +67,7 @@ test('a hit during move is reported in the completed result and the listener is 
     });
     const res = await tools.find(t => t.name === 'move').execute('id', { controls: ['forward'], seconds: 0.1 });
     assert.equal(res.isError, undefined, JSON.stringify(res));
-    assert.equal(res.details.completed, true);
+    assert.equal(res.details.outcome, 'success');
     assert.deepEqual(res.details.hitsDuring, [{ by: 'Zombie', id: 7, distance: 1.2, health: 16 }]);
     assert.equal(res.details.healthNow, 16);
     assert.equal(b.listenerCount('pi_hit'), 0);

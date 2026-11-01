@@ -65,7 +65,10 @@ export function createWork(ctx) {
                 return { ...task, assignedTo: name };
             });
             const plan = mailbox.planWork({ ...a, tasks });
-            return { goal: taskView(plan.goal), tasks: plan.tasks.map(t => taskView(t, t.owner === bot.username)) };
+            return {
+                goal: taskView(plan.goal, true),
+                tasks: plan.tasks.map(t => taskView(t, t.owner === bot.username, visible())),
+            };
         },
         { required: ['tasks'] },
     );
@@ -74,7 +77,8 @@ export function createWork(ctx) {
         'List compact task records. id returns one full definition/checkpoint. Fresh observations already show current and ready work; do not reread the unchanged board. Claim returns the full definition. Revisions prevent stale decisions.',
         { id, goalId: id, query: text(200, 0), after: integer(0, Number.MAX_SAFE_INTEGER) },
         a => {
-            const all = visible().filter(
+            const snapshot = visible();
+            const all = snapshot.filter(
                 t =>
                     (!a.id || t.id === a.id) &&
                     (!a.goalId || t.goalId === a.goalId || t.id === a.goalId) &&
@@ -83,7 +87,7 @@ export function createWork(ctx) {
             );
             const tasks = all.slice(0, 20);
             return {
-                tasks: tasks.map(t => taskView(t, Boolean(a.id))),
+                tasks: tasks.map(t => taskView(t, Boolean(a.id), snapshot)),
                 nextAfter: tasks.at(-1)?.id ?? a.after ?? 0,
                 hasMore: all.length > tasks.length,
             };
@@ -98,6 +102,7 @@ export function createWork(ctx) {
             taskView(
                 mailbox.updateTask(a.taskId, { state: 'claimed', revision: a.revision, note: 'Work started' }),
                 true,
+                visible(),
             ),
     );
     add(
@@ -113,7 +118,7 @@ export function createWork(ctx) {
             title: text(2000),
             ...definition,
         },
-        async (a, { bot: active, signal }) => {
+        async (a, { bot: active, signal, deadline }) => {
             const { taskId, ...update } = a;
             const task = visible().find(t => t.id === taskId);
             if (!task) throw new Error('Unknown or private task');
@@ -138,10 +143,13 @@ export function createWork(ctx) {
                     { ...task, checks: a.checks ?? task.checks },
                     {
                         signal,
+                        deadline,
+                        shouldYield: ctx.shouldYield,
+                        inspectBlock: (check, signal) => ctx.inspectBlock(active, check, signal),
                         inspectContainer: check => ctx.inspectStore(active, check, signal),
                     },
                 );
-                if (update.verification.passed === false)
+                if ((a.checks ?? task.checks)?.length && update.verification.passed !== true)
                     return { completed: false, verification: update.verification, task: taskReceipt(task) };
             }
             return taskReceipt(mailbox.updateTask(taskId, update));
@@ -150,8 +158,9 @@ export function createWork(ctx) {
             body: a =>
                 a.state === 'completed' &&
                 Boolean(
-                    (a.checks ?? visible().find(t => t.id === a.taskId)?.checks)?.some(c => c.kind === 'container'),
+                    (a.checks ?? visible().find(t => t.id === a.taskId)?.checks)?.some(c => c.kind !== 'inventory'),
                 ),
+            complete: value => value.completed !== false,
             required: ['taskId', 'revision', 'state', 'note'],
             allowDuringYield: a =>
                 a.state === 'checkpoint' &&

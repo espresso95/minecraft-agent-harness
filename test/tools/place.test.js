@@ -113,7 +113,7 @@ test('in reach: places without moving, reports movement none', async () => {
     const w = makeWorld(floor, { at: [0.5, -60, 0.5] });
     const r = await w.run('place', { x: 3, y: -60, z: 0, block: 'oak_planks' });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    assert.equal(r.details.result.movement.mode, 'none');
+    assert.equal(r.details.movement.mode, 'none');
     assert.deepEqual(w.placed, ['3,-60,0']);
     assert.ok(!w.log.some(l => l.startsWith('GOTO')));
 });
@@ -121,18 +121,18 @@ test('off-by-one fixed: never stands where the placer would step away (feet/head
     const w = makeWorld(floor, { at: [-7.5, -60, -7.5] });
     const r = await w.run('place', { x: 6, y: -60, z: 6, block: 'oak_planks' });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    const s = r.details.result.movement.stand;
+    const s = r.details.movement.stand;
     const feet = { x: s.x + 0.5, y: s.y, z: s.z + 0.5 };
     assert.ok(Math.hypot(feet.x - 6, feet.y + 60, feet.z - 6) >= 1.1);
     assert.ok(Math.hypot(feet.x - 6, feet.y + 1 + 60, feet.z - 6) >= 1.1);
-    assert.equal(r.details.result.movement.mode, 'walk');
+    assert.equal(r.details.movement.mode, 'walk');
     assert.deepEqual(w.placed, ['6,-60,6']);
 });
 test('standing at the target corner moves away first instead of letting the placer walk silently', async () => {
     const w = makeWorld(floor, { at: [5.5, -60, 5.5] });
     const r = await w.run('place', { x: 5, y: -60, z: 6, block: 'oak_planks' });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    assert.notEqual(r.details.result.movement.mode, 'none');
+    assert.notEqual(r.details.movement.mode, 'none');
 });
 test('no_support: structured failure with missingSupport chain and a concrete next call; repeat flag on second try', async () => {
     const w = makeWorld(floor, { at: [0.5, -60, 0.5] });
@@ -154,7 +154,7 @@ test('no_support: structured failure with missingSupport chain and a concrete ne
 test('occupied: same block is success (already present); other block fails occupied_target with next', async () => {
     const w = makeWorld([...floor, [1, -60, 0, 'oak_planks'], [2, -60, 0, 'cobblestone']]);
     const ok = await w.run('place', { x: 1, y: -60, z: 0, block: 'oak_planks' });
-    assert.equal(ok.details.result.alreadyPresent, true);
+    assert.equal(ok.details.alreadyPresent, true);
     const bad = await w.run('place', { x: 2, y: -60, z: 0, block: 'oak_planks' });
     assert.equal(failureCode(bad), 'occupied_target');
     assert.match(bad.details.facts.next, /another cell/);
@@ -163,13 +163,13 @@ test('occupied: same block is success (already present); other block fails occup
 test('natural terrain in the target cell is mined out first, then placed', async () => {
     const w = makeWorld([...floor, [1, -60, 0, 'dirt']]);
     const r = await w.run('place', { x: 1, y: -60, z: 0, block: 'oak_planks' });
-    assert.equal(r.details.result?.cleared, 'dirt', JSON.stringify(r.details).slice(0, 400));
+    assert.equal(r.details?.cleared, 'dirt', JSON.stringify(r.details).slice(0, 400));
     assert.ok(w.dug.length >= 1);
 });
 test('place_line skips a failed cell and keeps going', async () => {
     const w = makeWorld([...floor, [2, -60, 0, 'cobblestone']]);
     const r = await w.run('place_line', { block: 'oak_planks', x: 1, y: -60, z: 0, axis: 'x', count: 3 });
-    const res = r.details.result;
+    const res = r.details;
     assert.equal(res?.placedCount, 2, JSON.stringify(r.details).slice(0, 400));
     assert.equal(res.failedCount, 1);
     assert.equal(res.failures[0].code, 'occupied_target');
@@ -188,7 +188,7 @@ test('scaffold: no walkable stand, walks to a tower base, towers with dirt one j
     });
     const r = await w.run('place', { x: 0, y: -54, z: 3, block: 'oak_planks' });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    const mv = r.details.result.movement;
+    const mv = r.details.movement;
     assert.equal(mv.mode, 'scaffold');
     assert.ok(mv.scaffoldPlaced >= 1, JSON.stringify(mv));
     assert.equal(mv.scaffoldRemoved, mv.scaffoldPlaced);
@@ -210,7 +210,7 @@ test('above eye height uses the stricter reach margin (reach - 0.8)', async () =
     const w = makeWorld([...floor, [7, -59, 6], [7, -58, 6]], { at: [-7.5, -60, -7.5] });
     const r = await w.run('place', { x: 6, y: -58, z: 6, block: 'oak_planks' });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    const mv = r.details.result.movement;
+    const mv = r.details.movement;
     assert.equal(mv.mode, 'walk');
     assert.ok(-58 >= mv.stand.y + 1.62 - 0.5);
     assert.ok(mv.faceDistance <= 5 - 0.8, JSON.stringify(mv));
@@ -219,11 +219,11 @@ test('place_line is a batch of place calls: skips present cells, stops at first 
     const w = makeWorld([...floor, [1, -60, 0, 'oak_planks']], { at: [0.5, -60, -2.5] });
     const r = await w.run('place_line', { block: 'oak_planks', x: 0, y: -60, z: 0, axis: 'x', count: 3 });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    assert.deepEqual(r.details.result.placed, [
+    assert.deepEqual(r.details.placed, [
         { x: 0, y: -60, z: 0 },
         { x: 2, y: -60, z: 0 },
     ]);
-    assert.deepEqual(r.details.result.skipped, [{ x: 1, y: -60, z: 0 }]);
+    assert.deepEqual(r.details.skipped, [{ x: 1, y: -60, z: 0 }]);
     const f = await w.run('place_line', { block: 'oak_planks', x: 3, y: -56, z: 0, axis: 'x', count: 2 });
     assert.equal(failureCode(f), 'no_support');
     assert.ok(f.details.facts.firstFailure.next);
@@ -255,7 +255,7 @@ test('place_line stops starting new cells before its deadline margin (never cut 
     Date.now = () => realNow() + shift;
     try {
         const r = await w.run('place_line', { block: 'oak_planks', x: 2, y: -60, z: 0, axis: 'z', count: 3 });
-        const s = r.details.result;
+        const s = r.details;
         assert.equal(s.placedCount, 1);
         assert.equal(s.stoppedEarly, 'deadline_margin');
         assert.equal(s.notAttempted, 2);
@@ -293,7 +293,7 @@ test('scaffold left by an aborted place is never dug by a later action (may be a
     assert.ok(dirt.length > 0, 'abort left scaffold');
     const dugBefore = w.dug.length;
     const r2 = await run('place', { x: 1, y: -54, z: 3, block: 'oak_planks' });
-    const res = r2.details.result ?? r2.details.facts ?? r2.details;
+    const res = r2.details ?? r2.details.facts ?? r2.details;
     assert.equal(res.earlierScaffold, undefined);
     for (const k of dirt) assert.equal(w.cells.get(k), 'dirt', 'left scaffold untouched: ' + k);
     assert.equal(w.dug.length, dugBefore);
@@ -318,8 +318,8 @@ test('place_line margin follows the real action deadline (timeout_ms)', async ()
             count: 3,
             timeout_ms: 30000,
         });
-        assert.equal(r.details.result.stoppedEarly, 'deadline_margin');
-        assert.equal(r.details.result.placedCount, 1);
+        assert.equal(r.details.stoppedEarly, 'deadline_margin');
+        assert.equal(r.details.placedCount, 1);
     } finally {
         Date.now = realNow;
     }

@@ -385,7 +385,6 @@ class MinecraftSession {
         const result = await execute(false, 'code', args, signal);
         const text = result?.content?.map(c => c.text ?? '').join('') ?? '';
         if (result?.isError) throw new Error(`${name}: ${text.slice(0, 2000)}`);
-        if (result?.details && 'result' in result.details) return result.details.result;
         try {
             return JSON.parse(text);
         } catch {

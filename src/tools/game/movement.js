@@ -1,7 +1,7 @@
 import { abortError, failWith, withFailureCode } from './failures.js';
 import { DOORISH, doorOpen, fmtDrop, guardBuiltBlocks } from './guards.js';
 import { allowedGameMode, flyCooperatively, requireFunction, untilAbort } from './runtime.js';
-import { choice, coords, number } from './schema.js';
+import { choice, coords, number, position } from './schema.js';
 
 export function createMovement(ctx) {
     const {
@@ -22,14 +22,44 @@ export function createMovement(ctx) {
         stallWatch,
         withDeadline,
     } = ctx;
+    const failures = new Map();
+    let terrainRevision = 0;
+    bot.on?.('blockUpdate', () => {
+        terrainRevision++;
+    });
+    const signature = active =>
+        JSON.stringify([
+            Math.floor(active.entity.position.x),
+            Math.floor(active.entity.position.y),
+            Math.floor(active.entity.position.z),
+            terrainRevision,
+            active.game?.dimension,
+            active.heldItem?.type,
+            active.inventory
+                ?.items?.()
+                .map(i => [i.name, i.count])
+                .sort(),
+        ]);
     add('stop_action', 'Cancel the current body action. Does not interrupt messaging.', {}, () => runner.stop());
     add(
         'go_to',
         'Walk to coordinates. May dig through natural terrain (dirt, stone, sand, leaves...) and pillar up with dirt/cobblestone from your inventory; never breaks built blocks. Stops within `distance` blocks of the target (default 2) and reports where it actually stopped. Failures explain why and suggest a next step.',
-        { ...coords, distance: number(0.5, 8) },
+        { ...position, distance: number(0.5, 8) },
         async (a, { bot: active, signal }) => {
             const tolerance = a.distance ?? 2;
             const target = standingTarget(active, a, tolerance);
+            const key = JSON.stringify([active.game?.dimension, target.x, target.y, target.z, tolerance]);
+            const previous = failures.get(key);
+            if (previous?.signature === signature(active))
+                throw failWith(
+                    'unchanged_state',
+                    'This destination already failed from the same position, terrain and inventory. Choose a different observed waypoint or change the route before retrying.',
+                    {
+                        ...previous.facts,
+                        repeated: true,
+                        previousCode: previous.code,
+                    },
+                );
             const watch = stallWatch(active),
                 prog = progressWatch(active, target),
                 t0 = Date.now();
@@ -50,12 +80,12 @@ export function createMovement(ctx) {
             const p = active.entity?.position;
             const round = v => Math.round(v * 100) / 100;
             const facts = {
-                target: { x: a.x, y: a.y, z: a.z },
-                ...(target !== a ? { navigationTarget: target } : {}),
+                target: { x: target.x, y: target.y, z: target.z },
+                ...(target !== a ? { requestedTarget: { x: a.x, y: a.y, z: a.z } } : {}),
                 tolerance,
                 acceptedWithin: tolerance + 1,
                 stoppedAt: p ? { x: round(p.x), y: round(p.y), z: round(p.z) } : null,
-                distanceToTarget: p ? round(Math.hypot(p.x - a.x, p.y - a.y, p.z - a.z)) : null,
+                distanceToTarget: p ? round(Math.hypot(p.x - target.x, p.y - target.y, p.z - target.z)) : null,
                 eyeY: p ? round(p.y + (active.entity.eyeHeight ?? 1.62)) : null,
             };
             if (facts.distanceToTarget > facts.acceptedWithin) reached = false;
@@ -63,7 +93,7 @@ export function createMovement(ctx) {
                 const out = String(active.output || '');
                 const s = facts.stoppedAt,
                     here = s ? `${Math.round(s.x)},${Math.round(s.y)},${Math.round(s.z)}` : 'your position';
-                const tgt = `${a.x},${a.y},${a.z}`,
+                const tgt = `${target.x},${target.y},${target.z}`,
                     d = facts.distanceToTarget;
                 const noRoute = /Path not found|No path to the goal/.test(out),
                     slow = /Took to long/.test(out),
@@ -92,18 +122,22 @@ export function createMovement(ctx) {
                 } else if (short)
                     msg = `${noRoute ? 'No complete route exists; ' : ''}stopped ${d} blocks from ${tgt} at ${here}, the closest reachable spot found. Next: if you only need to place or mine there, try it from here; otherwise target a nearby air cell above solid ground.`;
                 else msg = (out || 'Could not reach the target.').trim();
-                const hint = goToHint(active, a);
+                const hint = goToHint(active, target);
                 if (hint && !msg.includes(hint)) msg = `${msg} ${hint}`;
                 else if (code === 'no_progress')
                     msg +=
                         ' Next: go_to a waypoint that is open ground in a different direction, or break_area your own way through.';
-                throw failWith(code, msg, {
+                const recovery = {
                     ...facts,
                     ...(hint ? { hint } : {}),
                     ...(await navigationRecovery(active, target, signal)),
                     pathfinder: out.trim().split('\n').slice(-3).join(' | '),
-                });
+                };
+                failures.set(key, { signature: signature(active), code, facts: recovery });
+                if (failures.size > 64) failures.delete(failures.keys().next().value);
+                throw failWith(code, msg, recovery);
             }
+            failures.delete(key);
             return { reached: true, ...facts };
         },
         { ...body, required: ['x', 'y', 'z'] },

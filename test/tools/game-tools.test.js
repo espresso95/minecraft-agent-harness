@@ -165,7 +165,7 @@ test('body work serializes while mailbox tools do not wait for it', async () => 
     const second = run('equip', { item: 'dirt' });
     await delay(5);
     assert.deepEqual(order, ['start']);
-    assert.equal((await run('message_status')).details, 'one DM');
+    assert.equal((await run('message_status')).details.value, 'one DM');
     release();
     await Promise.all([first, second]);
     assert.deepEqual(order, ['start', 'finish', 'start', 'finish']);
@@ -367,8 +367,11 @@ test('mailbox fixed actor, registered-recipient restriction, paging and public s
     assert.deepEqual(sent, [['Peer', 'private', {}]]);
     assert.equal((await run('send_dm', { to: 'Human', text: 'hi' })).isError, true);
     assert.equal((await run('send_dm', { to: 'Peer', text: 'hi', actor: 'Peer' })).isError, true);
-    assert.deepEqual((await run('read_chat')).details, [-2, 20]);
-    assert.deepEqual((await run('read_dms', { peer: 'Peer', after: 41, limit: 5 })).details, ['Peer', 41, 5]);
+    assert.deepEqual((await run('read_chat')).details, { value: [-2, 20], outcome: 'success' });
+    assert.deepEqual((await run('read_dms', { peer: 'Peer', after: 41, limit: 5 })).details, {
+        value: ['Peer', 41, 5],
+        outcome: 'success',
+    });
     for (const text of ['/op Test', ' /tp 1 2 3', 'hello\n/op me', '!goTo(1,2,3)', '  '])
         assert.equal((await run('post_chat', { text })).isError, true);
     assert.equal((await run('post_chat', { text: 'Hello crew.' })).details.posted, true);
@@ -422,8 +425,15 @@ test('craft uses ordinary recipes with reachable table, no armor plugin or autom
 
 test('plan callback is host-bound and cannot take paths or rewrite entries', async () => {
     const { run } = setup({ plan: { read: a => a, append: text => ({ appended: text }) } });
-    assert.deepEqual((await run('read_plan', { query: 'arch' })).details, { query: 'arch', before: 0 });
-    assert.deepEqual((await run('append_plan', { text: 'A proposal' })).details, { appended: 'A proposal' });
+    assert.deepEqual((await run('read_plan', { query: 'arch' })).details, {
+        query: 'arch',
+        before: 0,
+        outcome: 'success',
+    });
+    assert.deepEqual((await run('append_plan', { text: 'A proposal' })).details, {
+        appended: 'A proposal',
+        outcome: 'success',
+    });
     assert.equal((await run('read_plan', { path: '/etc/passwd' })).isError, true);
 });
 
@@ -527,10 +537,10 @@ test('gather walks to a block it can see, skips failing ones (remembered across 
         perception: { isBlockVisible: (_, x) => x.visible },
     });
     const output = await run('gather', { block: 'oak_log', count: 3 });
-    assert.equal(output.details.result.mined, 1);
+    assert.equal(output.details.mined, 1);
     assert.deepEqual(dug, [2]);
-    assert.deepEqual(output.details.result.inventoryDelta, { oak_log: 1 });
-    assert.equal(output.details.result.skipped[0].code, 'not_visible_or_range');
+    assert.deepEqual(output.details.inventoryDelta, { oak_log: 1 });
+    assert.equal(output.details.skipped[0].code, 'not_visible_or_range');
     const again = await run('gather', { block: 'oak_log', count: 1 });
     assert.equal(again.isError, true);
     assert.equal(failureCode(again), 'not_found');
@@ -558,13 +568,13 @@ test('gather yields between blocks with truthful partial counts and collected in
     });
     const output = await run('gather', { block: 'oak_log', count: 10 });
     assert.equal(output.isError, undefined);
-    assert.equal(output.details.result.yielded, true);
-    assert.equal(output.details.result.mined, 1);
-    assert.equal(output.details.result.requested, 10);
-    assert.deepEqual(output.details.result.inventoryDelta, { oak_log: 1 });
+    assert.equal(output.details.yielded, true);
+    assert.equal(output.details.mined, 1);
+    assert.equal(output.details.requested, 10);
+    assert.deepEqual(output.details.inventoryDelta, { oak_log: 1 });
     const again = await run('gather', { block: 'oak_log', count: 9 });
-    assert.equal(again.details.result.yielded, true);
-    assert.equal(again.details.result.mined, 0);
+    assert.equal(again.details.yielded, true);
+    assert.equal(again.details.mined, 0);
     assert.equal(mined, 1);
 });
 
@@ -692,7 +702,7 @@ test('craft count means items, not recipe repetitions', async () => {
     });
     const out = await run('craft', { item: 'oak_planks', count: 8 });
     assert.equal(crafts, 2);
-    assert.equal(out.details.result.crafted, 8);
+    assert.equal(out.details.crafted, 8);
     b.recipesFor = (_id, _m, _n, table) => (table === true ? [{ result: { id: 7, count: 1 } }] : []);
     const needTable = await run('craft', { item: 'oak_planks', count: 1 });
     assert.equal(failureCode(needTable), 'missing_support');
@@ -721,8 +731,8 @@ test('combat uses direct attack only, with LOS and ordinary reach', async () => 
         },
     });
     assert.equal((await run('attack', { id: 2 })).isError, true);
-    assert.equal((await run('attack', { id: 1, swings: 1 })).details.result.swings, 1);
-    const fight = (await run('attack', { id: 1 })).details.result;
+    assert.equal((await run('attack', { id: 1, swings: 1 })).details.swings, 1);
+    const fight = (await run('attack', { id: 1 })).details;
     assert.equal(fight.stoppedBecause, 'killed');
     assert.equal(fight.swings, 1);
     assert.deepEqual(hits, [1, 1]);
@@ -742,7 +752,7 @@ test('attack has no health back-off and stops when something else hits', async (
         },
     });
     b.health = 3;
-    const low = (await run('attack', { id: 1, swings: 2 })).details.result;
+    const low = (await run('attack', { id: 1, swings: 2 })).details;
     assert.equal(low.stoppedBecause, 'swings');
     assert.equal(low.swings, 2);
     assert.ok(!controls.includes('back:true'));
@@ -751,7 +761,7 @@ test('attack has no health back-off and stops when something else hits', async (
     await new Promise(r => setTimeout(r, 120));
     assert.equal(b.pi_attackTargetId, 1);
     b.pi_attackStop = 'hit_by_other: skeleton (id 9)';
-    const other = (await p).details.result;
+    const other = (await p).details;
     assert.equal(other.stoppedBecause, 'hit_by_other: skeleton (id 9)');
     assert.equal(b.pi_attackTargetId, null);
 });
@@ -1110,7 +1120,8 @@ test('actual Mineflayer loader: compatibility must follow asynchronous plugin in
 test('coordinate schemas stay isolated across factories; deadlines remain optional', async () => {
     for (let i = 0; i < 5; i++) {
         let inspected = 0;
-        const { tools, run } = setup({
+        const { b, tools, run } = setup({
+            perception: { isBlockVisible: () => true },
             skills: {
                 inspect: (_bot, ...xyz) => {
                     inspected++;
@@ -1119,8 +1130,9 @@ test('coordinate schemas stay isolated across factories; deadlines remain option
             },
         });
         const inspect = tools.find(t => t.name === 'inspect_block');
+        b.blockAt = p => ({ name: 'stone', position: p });
         assert.deepEqual(inspect.parameters.required, ['x', 'y', 'z']);
-        assert.equal('timeout_ms' in inspect.parameters.properties, false);
+        assert.equal(inspect.parameters.properties.timeout_ms.maximum, 120000);
         for (const tool of tools) assert.equal(tool.parameters.required.includes('timeout_ms'), false, tool.name);
         for (const tool of tools.filter(t =>
             ['break_block', 'interact_block', 'open_container', 'sleep'].includes(t.name),
@@ -1129,27 +1141,28 @@ test('coordinate schemas stay isolated across factories; deadlines remain option
             assert.equal(tool.parameters.properties.timeout_ms.maximum, 120000);
             assert.notEqual(tool.parameters.properties, inspect.parameters.properties);
         }
-        assert.deepEqual((await run('inspect_block', { x: -3, y: 64, z: 2 })).details, [-3, 64, 2]);
+        assert.deepEqual((await run('inspect_block', { x: -3, y: 64, z: 2 })).details.text, [-3, 64, 2]);
         assert.equal(inspected, 1);
         assert.equal((await run('inspect_block', { x: 0, y: 320, z: 0 })).isError, true);
-        assert.equal((await run('inspect_block', { x: 0, y: 64, z: 0, timeout_ms: 1000 })).isError, true);
+        assert.equal((await run('inspect_block', { x: 0, y: 64, z: 0, timeout_ms: 1000 })).isError, undefined);
     }
 });
 
-test('native failure codes stay out of model-visible results and preserve successes', async () => {
+test('native actions expose one flat result and typed failures without duplicate wrappers', async () => {
     const { run } = setup({ skills: { equip: async () => true } });
     const success = await run('equip', { item: 'stone' });
-    assert.deepEqual(success, {
-        content: [{ type: 'text', text: '{"completed":true,"result":true,"log":""}' }],
-        details: { completed: true, result: true, log: '' },
-    });
+    assert.deepEqual(success.details, { value: true, outcome: 'success' });
+    assert.deepEqual(JSON.parse(success.content[0].text), success.details);
     const invalid = await run('equip', {});
     assert.equal(failureCode(invalid), 'validation');
-    assert.deepEqual(invalid, {
-        content: [{ type: 'text', text: '{"error":"arguments.item is required","cancelled":false}' }],
-        details: { error: 'arguments.item is required', cancelled: false },
-        isError: true,
+    assert.deepEqual(invalid.details, {
+        outcome: 'error',
+        error: 'arguments.item is required',
+        cancelled: false,
+        code: 'validation',
     });
+    assert.deepEqual(JSON.parse(invalid.content[0].text), invalid.details);
+    assert.equal(invalid.isError, true);
     assert.equal(JSON.stringify(invalid).includes('failureCode'), false);
 });
 
@@ -1158,7 +1171,7 @@ test('actual inherited inspection visibility error is classified without changin
     b.blockAt = () => null;
     const failed = await run('inspect_block', { x: 1, y: 64, z: 2 });
     assert.equal(failureCode(failed), 'not_visible_or_range');
-    assert.equal(failed.details.error, 'Block at 1, 64, 2 is not visible within 8 blocks. Move or look around first.');
+    assert.equal(failed.details.error, 'Target is not loaded; approach the known location first.');
 });
 
 test('native cancellation and action deadline remain distinct, errors are not serialized as codes', async () => {
@@ -1250,8 +1263,8 @@ test('fly_to flies in creative in cooperative steps, lands on request, refuses s
     };
     const r = await run('fly_to', { x: 3, y: 68, z: -1 });
     assert.equal(r.isError, undefined, JSON.stringify(r));
-    assert.deepEqual(r.details.result.position, { x: 3, y: 68, z: -1 });
-    assert.equal(r.details.result.flying, true);
+    assert.deepEqual(r.details.position, { x: 3, y: 68, z: -1 });
+    assert.equal(r.details.flying, true);
     assert.equal(b.physics.gravity, 0);
     await run('fly_to', { x: 1, y: 66, z: 1, land: true });
     assert.deepEqual(calls, ['start', 'start', 'stop']);
@@ -1308,7 +1321,7 @@ test('fly_to that never converges fails or times out without poisoning the runne
     b.entity.position = new Vec3(0, 64, 0);
     const ok = await run('fly_to', { x: 0, y: 66, z: 0 });
     assert.equal(ok.isError, undefined, JSON.stringify(ok));
-    assert.deepEqual(ok.details.result.position, { x: 0, y: 66, z: 0 });
+    assert.deepEqual(ok.details.position, { x: 0, y: 66, z: 0 });
 });
 
 test('window round trips that never settle (craft, open_container) time out without poisoning the runner or disconnecting', async () => {
@@ -1355,7 +1368,7 @@ test('window round trips that never settle (craft, open_container) time out with
     };
     const ok = await run('craft', { item: 'stick', count: 2 });
     assert.equal(ok.isError, undefined, JSON.stringify(ok));
-    assert.equal(ok.details.result.repetitions, 2);
+    assert.equal(ok.details.repetitions, 2);
 });
 
 test('eat interrupted mid-consume settles on abort without poisoning the runner or disconnecting', async () => {
@@ -1395,7 +1408,7 @@ test('eat interrupted mid-consume settles on abort without poisoning the runner 
     b.consume = async () => {};
     const ok = await run('eat', { item: 'bread' });
     assert.equal(ok.isError, undefined, JSON.stringify(ok));
-    assert.equal(ok.details.result, true);
+    assert.equal(ok.details.value, true);
     assert.equal(consumeCalls, 2);
 });
 

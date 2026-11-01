@@ -101,10 +101,11 @@ export function createHelpers(ctx) {
             if (!feet) return `The target ${xyz} is not loaded; go_to a nearer waypoint first.`;
             if (solid(feet) || solid(head)) {
                 const b = solid(feet) ? feet : head;
-                return `The target ${xyz} is inside solid ${b.name} (go_to needs 2 open blocks to stand in). Aim at an open cell next to it, or break_block / break_area it first.`;
+                const seen = perception?.isBlockVisible?.(active, b, 64);
+                return `The target ${xyz} is obstructed${seen ? ` by visible ${b.name}` : '; the obstructing block is not visible'} (go_to needs 2 open blocks to stand in). Choose observed open ground or approach and inspect it.`;
             }
             if (!solid(floor) && !['water', 'lava'].includes(floor?.name))
-                return `There is nothing to stand on at ${xyz} (${floor?.name ?? 'unloaded'} below it). Aim at an open cell directly above solid ground.`;
+                return `There is no confirmed solid footing at ${xyz}. Aim at an observed open cell directly above solid ground.`;
             return null;
         } catch {
             return null;
@@ -317,12 +318,12 @@ export function createHelpers(ctx) {
         if (pathError)
             throw failWith(
                 'no_path',
-                `Cannot walk to a spot with a view of the ${b.name} at ${p.x},${p.y},${p.z} (${String(pathError?.message ?? pathError).slice(0, 60)})`,
+                `Cannot walk to a spot with a view of the target block at ${p.x},${p.y},${p.z} (${String(pathError?.message ?? pathError).slice(0, 60)})`,
                 { target: p, ...hint, ...(await navigationRecovery(active, p, signal)) },
             );
         throw failWith(
             'not_visible_or_range',
-            `Walked toward the ${b.name} at ${p.x},${p.y},${p.z} but it is still not visible within reach`,
+            `Walked toward the target block at ${p.x},${p.y},${p.z} but it is still not visible within reach`,
             { target: p },
         );
     }

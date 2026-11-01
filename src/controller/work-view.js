@@ -71,6 +71,7 @@ export function workView(tasks, name, waitReason = null, resources = []) {
                 'Completion reported by': t.completedBy,
                 Assignee: t.assignedTo,
                 Scope: t.scope,
+                'Project specification': t.goalId ? tasks.find(goal => goal.id === t.goalId)?.scope : null,
                 Dependencies: t.dependencies.join(', ') || 'None',
                 'Unmet dependencies': t.unmetDependencies.join(', ') || 'None',
                 'Completion checks': t.checks?.length
@@ -83,7 +84,7 @@ export function workView(tasks, name, waitReason = null, resources = []) {
                     ? t.verification.checks
                           ?.map(
                               check =>
-                                  `${check.passed ? 'Passed' : 'Failed'}: ${describeWorkCheck(check)} (observed: ${check.observed ?? 'not visible'})`,
+                                  `${check.passed === true ? 'Passed' : check.passed === false ? 'Failed' : 'Unobserved'}: ${describeWorkCheck(check)}${check.total ? ` (${check.matched}/${check.total} matched, ${check.unobserved} unobserved)` : ` (observed: ${check.observed ?? 'not visible'})`}`,
                           )
                           .join('; ') || 'No independent checks defined'
                     : null,

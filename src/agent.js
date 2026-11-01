@@ -632,6 +632,8 @@ export async function startAgent(settings, options = {}) {
                     perception,
                     inspectContainer: (check, signal) =>
                         runner.invokeTool('inspect_container', { x: check.x, y: check.y, z: check.z }, signal),
+                    inspectBlock: (check, signal) =>
+                        runner.invokeTool('inspect_block', { x: check.x, y: check.y, z: check.z }, signal),
                 }),
             );
             if (runShell)

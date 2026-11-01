@@ -35,6 +35,7 @@ export function createSkillTools({
     bot,
     perception,
     inspectContainer,
+    inspectBlock,
     toolList = () => [],
 }) {
     let contractHash;
@@ -155,7 +156,7 @@ export function createSkillTools({
                           bot,
                           perception,
                           { revision: skill.id, checks: a.checks ?? [] },
-                          { inspectContainer, signal },
+                          { inspectContainer, inspectBlock, signal },
                       )
                     : {
                           at: new Date().toISOString(),

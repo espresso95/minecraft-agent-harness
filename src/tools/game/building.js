@@ -403,7 +403,11 @@ export function createBuilding(ctx) {
                 );
             return summary;
         },
-        { ...body, required: ['block', 'x', 'y', 'z', 'axis', 'count'] },
+        {
+            ...body,
+            required: ['block', 'x', 'y', 'z', 'axis', 'count'],
+            complete: value => !value.failedCount && !value.notAttempted,
+        },
     );
     return { placeBlock };
 }

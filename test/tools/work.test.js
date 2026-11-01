@@ -55,6 +55,7 @@ test('native completion checks observe the world and inventory; failed or invisi
             revision: task.revision,
             state: 'completed',
             note: 'Checked the result',
+            timeout_ms: 120000,
         });
     assert.equal((await attempt()).completed, false);
     blockName = 'oak_planks';
@@ -76,6 +77,34 @@ test('native completion checks observe the world and inventory; failed or invisi
     assert.equal(done.state, 'completed');
     assert.equal(done.verification.passed, true);
     assert.equal((await attempt()).revision, done.revision);
+});
+
+test('task details inherit the current project specification without copying it into task state', async t => {
+    const dir = mkdtempSync(join(tmpdir(), 'project-scope-'));
+    const mailbox = new MailboxStore(join(dir, 'mail.sqlite'), 'Worker');
+    t.after(() => {
+        mailbox.close();
+        rmSync(dir, { recursive: true, force: true });
+    });
+    const tools = createGameTools({ bot: { username: 'Worker' }, mailbox });
+    const run = async (name, args) => (await tools.find(t => t.name === name).execute('test', args)).details;
+    const plan = await run('work_plan', {
+        title: 'Base',
+        scope: 'Floor y65; bounds chosen by the team',
+        tasks: [{ key: 'wall', title: 'West wall', claim: true }],
+    });
+    assert.equal(plan.tasks[0].project.scope, plan.goal.scope);
+    await run('work_update', {
+        taskId: plan.goal.id,
+        revision: plan.goal.revision,
+        state: 'revised',
+        note: 'Surveyed a stepped site',
+        scope: 'Stepped floor y65 and y68 with connecting stairs',
+    });
+    const task = (await run('work_tasks', { id: plan.tasks[0].id })).tasks[0];
+    assert.match(task.project.scope, /Stepped floor/);
+    assert.notEqual(task.project.revision, plan.goal.revision);
+    assert.equal(mailbox.tasks().find(t => t.id === task.id).project, undefined);
 });
 
 test('terrain policy protects constructed and unknown materials and persistent leaves without claiming ownership', () => {

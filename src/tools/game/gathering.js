@@ -184,7 +184,7 @@ export function createGathering(ctx) {
                 note: 'Mined count is not pickup count; inspect inventory delta. May partially complete.',
             };
         },
-        { ...body, required: ['block', 'count'] },
+        { ...body, required: ['block', 'count'], complete: value => !value.yielded && value.mined >= value.requested },
     );
     async function mineOne(active, block, Movements, goals, signal) {
         const pos = block.position;

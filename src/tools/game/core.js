@@ -33,7 +33,7 @@ export function createCore(ctx) {
         description,
         properties,
         fn,
-        { body = false, required, idle = false, allowDuringYield } = {},
+        { body = false, required, idle = false, allowDuringYield, complete = () => true } = {},
     ) => {
         const parameters = object(properties, required);
         if (body) parameters.properties.timeout_ms = integer(1, 120000);
@@ -49,6 +49,7 @@ export function createCore(ctx) {
                 let code = 'validation';
                 try {
                     validate(parameters, args);
+                    const { timeout_ms: timeoutMs, ...input } = args;
                     const physical = isBodyTool({ body }, args);
                     code = 'unknown';
                     if (signal?.aborted) throw abortError('Tool cancelled');
@@ -59,7 +60,7 @@ export function createCore(ctx) {
                             await leaveBed(bot);
                             leftBed = true;
                         }
-                        const value = await fn(args, context);
+                        const value = await fn(input, context);
                         if (value === false) {
                             const missingItem =
                                 ['place_block', 'place'].includes(toolName) &&
@@ -69,14 +70,15 @@ export function createCore(ctx) {
                                 missingItem ? 'missing_item' : 'action_failed',
                             );
                         }
-                        return physical
-                            ? {
-                                  completed: true,
-                                  result: value ?? null,
-                                  log: context.bot.output,
-                                  ...(leftBed ? { leftBed: 'You were in bed; got up first.' } : {}),
-                              }
-                            : value;
+                        if (value?.state && 'frame' in value) return value;
+                        return {
+                            ...(value && typeof value === 'object' && !Array.isArray(value)
+                                ? value
+                                : { value: value ?? null }),
+                            outcome: complete(value) ? 'success' : 'partial',
+                            ...(physical && context.bot.output ? { log: context.bot.output } : {}),
+                            ...(leftBed ? { leftBed: 'You were in bed; got up first.' } : {}),
+                        };
                     };
                     const hits = [];
                     const onHit = ev => hits.push(ev);
@@ -87,7 +89,7 @@ export function createCore(ctx) {
                             ? await runner.run(toolName, invoke, {
                                   signal,
                                   timeoutMs:
-                                      args.timeout_ms ??
+                                      timeoutMs ??
                                       {
                                           go_to: 90000,
                                           place: PLACE_MS,
@@ -101,13 +103,15 @@ export function createCore(ctx) {
                                           smelt: SMELT_MS,
                                           deposit: CHEST_MS,
                                           withdraw: CHEST_MS,
+                                          inspect_block: CHEST_MS,
+                                          work_update: PLACE_LINE_MS,
                                       }[toolName],
                               })
                             : await invoke({ bot, signal });
                     } finally {
                         if (physical) bot.off?.('pi_hit', onHit);
                     }
-                    if (hits.length && value && typeof value === 'object' && value.completed) {
+                    if (hits.length && value && typeof value === 'object') {
                         value.hitsDuring = hits.map(h => ({
                             by: h.by,
                             ...(h.id != null ? { id: h.id } : {}),
@@ -160,9 +164,11 @@ export function createCore(ctx) {
                     return withFailureCode(
                         {
                             ...result({
+                                outcome: 'error',
                                 error: String(error.message),
                                 cancelled: error.name === 'AbortError',
-                                ...(facts ? { code, facts } : {}),
+                                code,
+                                ...(facts ? { facts } : {}),
                             }),
                             isError: true,
                         },

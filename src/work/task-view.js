@@ -1,5 +1,5 @@
 // Model responses omit internal projection fields and do not echo submitted data.
-export function taskView(task, details = false) {
+export function taskView(task, details = false, tasks = []) {
     const keys = details
         ? [
               'id',
@@ -37,7 +37,11 @@ export function taskView(task, details = false) {
               'revision',
               'blocker',
           ];
-    return Object.fromEntries(keys.filter(key => task[key] !== undefined).map(key => [key, task[key]]));
+    const project = details && tasks.find(t => t.id === task.goalId);
+    return {
+        ...Object.fromEntries(keys.filter(key => task[key] !== undefined).map(key => [key, task[key]])),
+        ...(project ? { project: { id: project.id, revision: project.revision, scope: project.scope } } : {}),
+    };
 }
 export function taskReceipt(task) {
     return {

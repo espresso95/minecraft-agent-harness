@@ -208,7 +208,7 @@ test('craft places a table from inventory when the recipe needs one, crafts, the
     const r = await w.run('craft', { item: 'wooden_pickaxe', count: 1 });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
     assert.equal(w.counts.wooden_pickaxe, 1);
-    assert.equal(r.details.result.craftingTable.recovered, true);
+    assert.equal(r.details.craftingTable.recovered, true);
     assert.equal(w.counts.crafting_table, 1);
     assert.ok(
         w.log.some(l => l.startsWith('PLACE crafting_table')) && w.log.includes('DIG crafting_table'),
@@ -222,8 +222,8 @@ test('craft with no table anywhere crafts one from 4 planks first; keep_table le
     const r = await w.run('craft', { item: 'wooden_pickaxe', count: 1, keep_table: true });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
     assert.equal(w.counts.wooden_pickaxe, 1);
-    assert.match(r.details.result.steps.join(' '), /crafted a crafting_table from 4 planks/);
-    assert.ok(r.details.result.craftingTable.left);
+    assert.match(r.details.steps.join(' '), /crafted a crafting_table from 4 planks/);
+    assert.ok(r.details.craftingTable.left);
     assert.ok([...w.cells.values()].includes('crafting_table'));
 });
 
@@ -231,7 +231,7 @@ test('craft walks to a table within 24 blocks instead of placing one', async () 
     const w = makeWorld([[6, -60, 6, 'crafting_table']], { oak_planks: 3, stick: 2 });
     const r = await w.run('craft', { item: 'wooden_pickaxe', count: 1 });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    assert.match(r.details.result.steps[0], /walked to the crafting_table at 6,-60,6/);
+    assert.match(r.details.steps[0], /walked to the crafting_table at 6,-60,6/);
     assert.ok(!w.log.some(l => l.startsWith('PLACE')));
 });
 
@@ -246,8 +246,8 @@ test('smelt loads input and fuel into a nearby furnace, waits and collects the o
     const w = makeWorld([[2, -60, 0, 'furnace']], { cobblestone: 8, oak_planks: 10 }, { furnace: 'stone' });
     const r = await w.run('smelt', { input: 'cobblestone', count: 8 });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    assert.deepEqual(r.details.result.collected, { stone: 8 });
-    assert.equal(r.details.result.stillCooking, 0);
+    assert.deepEqual(r.details.collected, { stone: 8 });
+    assert.equal(r.details.stillCooking, 0);
     assert.equal(w.counts.stone, 8);
     assert.equal(w.counts.oak_planks, 10 - Math.ceil(8 / 1.5));
     assert.ok(w.log.includes('CLOSE furnace'));
@@ -270,7 +270,7 @@ test('smelt with no furnace crafts one from cobblestone (placing a table), place
     const w = makeWorld([], { cobblestone: 12, oak_planks: 10 }, { furnace: 'stone' });
     const r = await w.run('smelt', { input: 'cobblestone', count: 4 });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    assert.match(r.details.result.steps.join(' | '), /crafted a furnace \| placed a furnace/);
+    assert.match(r.details.steps.join(' | '), /crafted a furnace \| placed a furnace/);
     assert.equal(w.counts.stone, 4);
     assert.ok([...w.cells.values()].includes('furnace'));
     assert.ok(![...w.cells.values()].includes('crafting_table'));
@@ -280,13 +280,13 @@ test('deposit and withdraw move items by name and report contents', async () => 
     const w = makeWorld([[2, -60, 0, 'chest']], { cobblestone: 40, oak_log: 5 }, { chest: { oak_planks: 16 } });
     const d = await w.run('deposit', { item: 'cobblestone', count: 30 });
     assert.equal(d.isError, undefined, JSON.stringify(d.details));
-    assert.equal(d.details.result.deposited, 30);
+    assert.equal(d.details.deposited, 30);
     assert.equal(w.counts.cobblestone, 10);
-    assert.deepEqual(d.details.result.contents, { oak_planks: 16, cobblestone: 30 });
+    assert.deepEqual(d.details.contents, { oak_planks: 16, cobblestone: 30 });
     const all = await w.run('deposit', { item: 'oak_log' });
-    assert.equal(all.details.result.deposited, 5);
+    assert.equal(all.details.deposited, 5);
     const wd = await w.run('withdraw', { item: 'oak_planks' });
-    assert.equal(wd.details.result.withdrawn, 16);
+    assert.equal(wd.details.withdrawn, 16);
     assert.equal(w.counts.oak_planks, 16);
     const miss = await w.run('withdraw', { item: 'iron_ingot' });
     assert.equal(failureCode(miss), 'not_found');
@@ -308,13 +308,13 @@ test('deposit/withdraw count from the chest when inventory updates lag until the
     const w = makeWorld([[2, -60, 0, 'chest']], { cobblestone: 40 }, { chest: { oak_planks: 16 }, staleInv: true });
     const d = await w.run('deposit', { item: 'cobblestone', count: 10 });
     assert.equal(d.isError, undefined, JSON.stringify(d.details));
-    assert.equal(d.details.result.deposited, 10);
-    assert.equal(d.details.result.note, undefined);
+    assert.equal(d.details.deposited, 10);
+    assert.equal(d.details.note, undefined);
     assert.equal(w.counts.cobblestone, 30);
     const wd = await w.run('withdraw', { item: 'oak_planks', count: 16 });
     assert.equal(wd.isError, undefined, JSON.stringify(wd.details));
-    assert.equal(wd.details.result.withdrawn, 16);
-    assert.equal(wd.details.result.note, undefined);
+    assert.equal(wd.details.withdrawn, 16);
+    assert.equal(wd.details.note, undefined);
     assert.equal(w.counts.oak_planks, 16);
 });
 
@@ -322,13 +322,13 @@ test('drop_item tosses, backs away, and reports items that come back', async () 
     const w = makeWorld([], { stick: 5 });
     const r = await w.run('drop_item', { item: 'stick', count: 5 });
     assert.equal(r.isError, undefined, JSON.stringify(r.details));
-    assert.equal(r.details.result.dropped, 5);
-    assert.equal(r.details.result.pickedBackUp, undefined);
+    assert.equal(r.details.dropped, 5);
+    assert.equal(r.details.pickedBackUp, undefined);
     assert.equal(w.counts.stick, 0);
     const w2 = makeWorld([], { stick: 5 }, { bounce: 2 });
     const r2 = await w2.run('drop_item', { item: 'stick', count: 5 });
-    assert.equal(r2.details.result.pickedBackUp, 2);
-    assert.match(r2.details.result.note, /landed back/);
+    assert.equal(r2.details.pickedBackUp, 2);
+    assert.match(r2.details.note, /landed back/);
 });
 
 test('drop_item to: unknown player fails without dropping; nearby player gets a give', async () => {
@@ -340,7 +340,7 @@ test('drop_item to: unknown player fails without dropping; nearby player gets a 
     const w2 = makeWorld([], { stick: 3 }, { players: { Ada: ada } });
     const r2 = await w2.run('drop_item', { item: 'stick', count: 3, to: 'ada' });
     assert.equal(r2.isError, undefined, JSON.stringify(r2.details));
-    assert.equal(r2.details.result.dropped, 3);
-    assert.match(r2.details.result.status, /picked up/);
+    assert.equal(r2.details.dropped, 3);
+    assert.match(r2.details.status, /picked up/);
     assert.ok(w2.log.includes('TOSS 3 stick'));
 });

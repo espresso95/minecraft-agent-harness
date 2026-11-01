@@ -160,6 +160,7 @@ export function workOverview(tasks, self) {
     const open = tasks.filter(t => !terminalTask(t));
     const current = open.filter(t => same(t.owner, self));
     const ready = open.filter(t => eligibleTask(t, self)).sort((a, b) => b.priority - a.priority || a.id - b.id);
+    const projects = new Set([...current, ...ready.slice(0, 5)].map(t => t.goalId));
     const blocked = open.filter(
         t => t.state === 'blocked' && [t.owner, t.assignedTo, t.creator].some(n => same(n, self)),
     );
@@ -191,7 +192,7 @@ export function workOverview(tasks, self) {
         ),
         goals: open
             .filter(t => t.kind === 'goal' && t.shared)
-            .slice(-5)
+            .filter((t, index, goals) => projects.has(t.id) || index >= goals.length - 5)
             .map(brief),
         current: current.map(brief),
         ready: ready.slice(0, 5).map(brief),

@@ -7,6 +7,7 @@ export const integer = (minimum, maximum) => ({ type: 'integer', minimum, maximu
 export const choice = values => ({ type: 'string', enum: values });
 
 export const coords = { x: integer(-29999999, 29999999), y: integer(-64, 319), z: integer(-29999999, 29999999) };
+export const position = { x: number(-29999999, 29999999), y: number(-64, 319), z: number(-29999999, 29999999) };
 
 export const count = integer(1, 64);
 

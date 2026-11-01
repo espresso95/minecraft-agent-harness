@@ -25,6 +25,7 @@ const codes = new Set([
     'approach_failed',
     'not_found',
     'no_progress',
+    'unchanged_state',
 ]);
 
 const failures = new WeakMap();

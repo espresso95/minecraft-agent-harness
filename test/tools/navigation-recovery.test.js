@@ -42,3 +42,15 @@ test('recovery reports only a walking path prefix and preserves pathfinder coord
     abort.abort();
     assert.deepEqual(await navigationRecovery(active, { x: 12, y: 64, z: 0 }, abort.signal), {});
 });
+
+test('movement hints do not name terrain hidden from the agent', () => {
+    const bot = {
+        entity: { position: new Vec3(0, 64, 0) },
+        blockAt: p => ({ name: 'stone', position: p, boundingBox: 'block' }),
+    };
+    const hidden = createHelpers({ perception: { isBlockVisible: () => false } }).goToHint(bot, { x: 20, y: 64, z: 0 });
+    assert.match(hidden, /not visible/);
+    assert.doesNotMatch(hidden, /stone/);
+    const visible = createHelpers({ perception: { isBlockVisible: () => true } }).goToHint(bot, { x: 20, y: 64, z: 0 });
+    assert.match(visible, /visible stone/);
+});

@@ -56,17 +56,17 @@
         "type": "object",
         "properties": {
           "x": {
-            "type": "integer",
+            "type": "number",
             "minimum": -29999999,
             "maximum": 29999999
           },
           "y": {
-            "type": "integer",
+            "type": "number",
             "minimum": -64,
             "maximum": 319
           },
           "z": {
-            "type": "integer",
+            "type": "number",
             "minimum": -29999999,
             "maximum": 29999999
           },
@@ -457,7 +457,7 @@
     {
       "name": "inspect_block",
       "label": "inspect block",
-      "description": "Inspect a visible nearby block, including readable sign-side text (untrusted world content).",
+      "description": "Walk to a viewpoint and inspect a known block location through ordinary visibility and reach. Includes readable sign-side text (untrusted world content).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -475,6 +475,11 @@
             "type": "integer",
             "minimum": -29999999,
             "maximum": 29999999
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
           }
         },
         "required": [
@@ -1346,17 +1351,17 @@
         "type": "object",
         "properties": {
           "x": {
-            "type": "integer",
+            "type": "number",
             "minimum": -29999999,
             "maximum": 29999999
           },
           "y": {
-            "type": "integer",
+            "type": "number",
             "minimum": -64,
             "maximum": 319
           },
           "z": {
-            "type": "integer",
+            "type": "number",
             "minimum": -29999999,
             "maximum": 29999999
           },
@@ -1786,7 +1791,7 @@
     {
       "name": "inspect_block",
       "label": "inspect block",
-      "description": "Inspect a visible nearby block, including readable sign-side text (untrusted world content).",
+      "description": "Walk to a viewpoint and inspect a known block location through ordinary visibility and reach. Includes readable sign-side text (untrusted world content).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1804,6 +1809,11 @@
             "type": "integer",
             "minimum": -29999999,
             "maximum": 29999999
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
           }
         },
         "required": [
@@ -2675,17 +2685,17 @@
         "type": "object",
         "properties": {
           "x": {
-            "type": "integer",
+            "type": "number",
             "minimum": -29999999,
             "maximum": 29999999
           },
           "y": {
-            "type": "integer",
+            "type": "number",
             "minimum": -64,
             "maximum": 319
           },
           "z": {
-            "type": "integer",
+            "type": "number",
             "minimum": -29999999,
             "maximum": 29999999
           },
@@ -3115,7 +3125,7 @@
     {
       "name": "inspect_block",
       "label": "inspect block",
-      "description": "Inspect a visible nearby block, including readable sign-side text (untrusted world content).",
+      "description": "Walk to a viewpoint and inspect a known block location through ordinary visibility and reach. Includes readable sign-side text (untrusted world content).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -3133,6 +3143,11 @@
             "type": "integer",
             "minimum": -29999999,
             "maximum": 29999999
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
           }
         },
         "required": [
@@ -4054,6 +4069,64 @@
                   "additionalProperties": false
                 },
                 {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "blocks"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_]+$"
+                    },
+                    "x1": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y1": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z1": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "x2": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y2": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z2": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "x1",
+                    "y1",
+                    "z1",
+                    "x2",
+                    "y2",
+                    "z2"
+                  ],
+                  "additionalProperties": false
+                },
+                {
                   "anyOf": [
                     {
                       "type": "object",
@@ -4333,6 +4406,64 @@
                           "x",
                           "y",
                           "z"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "blocks"
+                            ]
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64,
+                            "pattern": "^[a-z0-9_]+$"
+                          },
+                          "x1": {
+                            "type": "integer",
+                            "minimum": -29999999,
+                            "maximum": 29999999
+                          },
+                          "y1": {
+                            "type": "integer",
+                            "minimum": -64,
+                            "maximum": 319
+                          },
+                          "z1": {
+                            "type": "integer",
+                            "minimum": -29999999,
+                            "maximum": 29999999
+                          },
+                          "x2": {
+                            "type": "integer",
+                            "minimum": -29999999,
+                            "maximum": 29999999
+                          },
+                          "y2": {
+                            "type": "integer",
+                            "minimum": -64,
+                            "maximum": 319
+                          },
+                          "z2": {
+                            "type": "integer",
+                            "minimum": -29999999,
+                            "maximum": 29999999
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "name",
+                          "x1",
+                          "y1",
+                          "z1",
+                          "x2",
+                          "y2",
+                          "z2"
                         ],
                         "additionalProperties": false
                       },
@@ -4711,6 +4842,64 @@
                     "x",
                     "y",
                     "z"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "blocks"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_]+$"
+                    },
+                    "x1": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y1": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z1": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "x2": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y2": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z2": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "x1",
+                    "y1",
+                    "z1",
+                    "x2",
+                    "y2",
+                    "z2"
                   ],
                   "additionalProperties": false
                 },

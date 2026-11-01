@@ -12,6 +12,12 @@ class BatchPaused(RuntimeError):
         super().__init__("Batch yielded; preserve progress and review instructions: " + json.dumps(result))
 
 
+class BatchIncomplete(RuntimeError):
+    def __init__(self, result):
+        self.result = result
+        super().__init__("Action made partial progress; inspect before continuing: " + json.dumps(result))
+
+
 def call(name, arguments=None, **kwargs):
     if arguments is not None and kwargs:
         raise ValueError("Use an argument dictionary or keyword arguments")
@@ -33,6 +39,8 @@ def call(name, arguments=None, **kwargs):
     result = reply.get("result")
     if isinstance(result, dict) and result.get("yielded"):
         raise BatchPaused(result)
+    if isinstance(result, dict) and result.get("outcome") == "partial":
+        raise BatchIncomplete(result)
     return result
 
 

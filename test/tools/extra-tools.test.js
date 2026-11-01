@@ -42,7 +42,7 @@ test('extra tools are validated, appended after the built-in tools and run with 
     assert.equal(tools.at(-1).name, 'buy');
     assert.equal(tools.at(-1).idle, false);
     const ok = await tools.at(-1).execute('id', { item: 'wool' });
-    assert.deepEqual(ok.details, { bought: 'wool' });
+    assert.deepEqual(ok.details, { bought: 'wool', outcome: 'success' });
     assert.deepEqual(calls, [[{ item: 'wool' }, 'Test']]);
     const bad = await tools.at(-1).execute('id', { item: 'diamonds' });
     assert.equal(bad.isError, true);

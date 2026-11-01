@@ -110,6 +110,26 @@ test('Python checkpoints use the current task revision and preserve progress bet
     }
 });
 
+test('Python batches stop on a partial action and retain its progress data', async () => {
+    const s = await setup(async () => ({ outcome: 'partial', placedCount: 1, requested: 3 }));
+    try {
+        const r = await s.run(
+            `python3 - <<'PY'\nfrom agent_tools import call\ncall('place_line', {})\ncall('place_line', {})\nPY`,
+        );
+        assert.equal(r.isError, true);
+        assert.equal(s.calls.length, 1);
+        assert.match(r.content[0].text, /BatchIncomplete/);
+        assert.match(r.content[0].text, /"placedCount": 1/);
+        s.calls.length = 0;
+        const cli = await s.run("set -e; tool place_line '{}'; tool place_line '{}'");
+        assert.equal(cli.isError, true);
+        assert.equal(s.calls.length, 1);
+        assert.match(cli.content[0].text, /partial progress/);
+    } finally {
+        await s.tool.close();
+    }
+});
+
 test('two agents reuse the same script library through their own tool relays', async () => {
     const first = await setup(async () => ({ agent: 'first' }));
     const backend = createLocalBackend({ workdir: path.join(first.root, 'second-home'), sharedDir: first.shared });
