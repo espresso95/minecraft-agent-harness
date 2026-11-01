@@ -104,3 +104,21 @@ test('zero and omitted cursor both start at newest page; null output is terminal
     const empty = createSessionHistoryTool(() => []);
     assert.deepEqual(await read(empty, { before: 0 }), { entries: [], nextBefore: null });
 });
+
+test('native inbox entries remain searchable with their original sender and source ID after compaction', async () => {
+    const entries = [
+        {
+            type: 'custom_message',
+            customType: 'minecraft_inbox',
+            content: 'Human: preserve parcel x=7; sourceKind=mailbox sourceId=42',
+            details: { messages: [{ sourceId: 42 }] },
+        },
+        { type: 'compaction', summary: 'A summary' },
+    ];
+    const result = await read(
+        createSessionHistoryTool(() => entries),
+        { query: 'parcel' },
+    );
+    assert.equal(result.entries.length, 1);
+    assert.match(result.entries[0].text, /Human.*sourceId=42/);
+});

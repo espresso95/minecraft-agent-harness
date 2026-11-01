@@ -478,7 +478,6 @@ export async function startAgent(settings, options = {}) {
             for (const ev of unseen) ev.shown = true;
             return formatHitAlert(unseen, bot.health);
         };
-        const alerts = () => [hitAlert(), inbox.note()].filter(Boolean).join('\n') || null;
         const observe = async options => {
             const current = await observeWorld(options);
             const alert = hitAlert();
@@ -686,9 +685,11 @@ export async function startAgent(settings, options = {}) {
             maxModelCalls: Number.MAX_SAFE_INTEGER,
             maxToolCalls: Number.MAX_SAFE_INTEGER,
             continuous: true,
-            turnHeadline: alerts,
-            toolResultNote: alerts,
-            beforeRequest: () => inbox.beginRequest(),
+            turnHeadline: hitAlert,
+            toolResultNote: hitAlert,
+            inboxDelivery: () => inbox.delivery(),
+            beforeRequest: delivered => inbox.beginRequest(delivered),
+            onCompaction: () => inbox.resetDelivery(),
             shouldYield,
             onResponse: success => inbox.finishRequest(success),
             onCycleEnd: cycle => inbox.endCycle(cycle),

@@ -60,12 +60,20 @@ async function fixture(overrides = {}, manager = store(), clock = new Clock()) {
             };
         },
         emit: event => listener?.(event),
+        customMessages: [],
+        sendCustomMessage: async message => {
+            fake.customMessages.push({ role: 'custom', ...message });
+        },
         prompt: async text => {
             prompts.push(text);
             fake.abortController = new AbortController();
             return fake.script();
         },
-        context: () => fake.agent.transformContext([{ role: 'user', content: 'history' }], fake.abortController.signal),
+        context: () =>
+            fake.agent.transformContext(
+                [...fake.customMessages, { role: 'user', content: 'history' }],
+                fake.abortController.signal,
+            ),
         call: async (name, params = {}) => {
             const result = await installedTools
                 .find(tool => tool.name === name)
@@ -229,9 +237,8 @@ test('real inbox receipts follow request boundaries across failures and messages
     let inbox;
     const f = await fixture({
         tools: [tool('inspect', async () => ({ content: [{ type: 'text', text: 'world' }] }))],
-        turnHeadline: () => inbox.note(),
-        toolResultNote: () => inbox.note(),
-        beforeRequest: () => inbox.beginRequest(),
+        inboxDelivery: () => inbox.delivery(),
+        beforeRequest: delivered => inbox.beginRequest(delivered),
         onResponse: success => inbox.finishRequest(success),
         onCycleEnd: cycle => inbox.endCycle(cycle),
     });
@@ -261,7 +268,8 @@ test('real inbox receipts follow request boundaries across failures and messages
             ['Arrived while thinking'],
         );
         const result = await f.fake.call('inspect');
-        assert.match(result.content.at(-1).text, /Arrived while thinking/);
+        assert.doesNotMatch(JSON.stringify(result), /Arrived while thinking/);
+        assert.match(JSON.stringify(f.fake.customMessages), /Arrived while thinking/);
         await f.fake.context();
         response('error');
     };
@@ -272,7 +280,7 @@ test('real inbox receipts follow request boundaries across failures and messages
         response('stop');
     };
     await f.clock.advance(20000);
-    assert.match(f.prompts.at(-1), /Arrived while thinking/);
+    assert.match(JSON.stringify(f.fake.customMessages), /Arrived while thinking/);
     assert.deepEqual(recipient.unreadMessages(), []);
 });
 
@@ -312,9 +320,8 @@ for (const body of [true, false])
         f = await fixture({
             tools: [native, ...shell],
             shouldYield: () => inbox.shouldYield(),
-            turnHeadline: () => inbox.note(),
-            toolResultNote: () => inbox.note(),
-            beforeRequest: () => inbox.beginRequest(),
+            inboxDelivery: () => inbox.delivery(),
+            beforeRequest: delivered => inbox.beginRequest(delivered),
             onResponse: success => inbox.finishRequest(success),
             onCycleEnd: cycle => inbox.endCycle(cycle),
         });
@@ -334,10 +341,10 @@ for (const body of [true, false])
             await f.fake.context();
             const result = await f.fake.call('run_shell', { cmd: 'synthetic batch' });
             assert.equal(result.isError, false);
-            assert.equal(result.content.filter(c => c.text.includes(message)).length, 1);
+            assert.equal(result.content.filter(c => c.text.includes(message)).length, 0);
             assert.equal(recipient.unreadMessages().length, 1);
             const outgoing = await f.fake.agent.transformContext(
-                [{ role: 'toolResult', toolName: 'run_shell', content: result.content }],
+                [...f.fake.customMessages, { role: 'toolResult', toolName: 'run_shell', content: result.content }],
                 f.fake.abortController.signal,
             );
             assert.ok(JSON.stringify(outgoing).includes(message));
@@ -730,7 +737,7 @@ test('Pi factory uses verified APIs: native-only, compatible Responses endpoint 
     const root = await mkdtemp(join(tmpdir(), 'pi-session-contract-'));
     try {
         const calls = {};
-        const model = { id: 'test-model', maxTokens: 8192 };
+        const model = { id: 'test-model', contextWindow: 128000, maxTokens: 8192 };
         const sdk = {
             SettingsManager: {
                 inMemory: settings => {
@@ -1672,7 +1679,8 @@ test('program calls and physical actions have distinct telemetry without losing 
 test('a concrete waiting reason persists across reconnect and clears when the next cycle starts', async () => {
     const manager = store(),
         f = await fixture({}, manager);
-    f.fake.script = async () => f.runner.requestWait(160000, 'Waiting for a shared prerequisite', { tasks: { 9: 7 }, checks: [] });
+    f.fake.script = async () =>
+        f.runner.requestWait(160000, 'Waiting for a shared prerequisite', { tasks: { 9: 7 }, checks: [] });
     f.runner.start();
     await f.clock.advance();
     assert.equal(f.runner.waitReason, 'Waiting for a shared prerequisite');
@@ -1683,6 +1691,7 @@ test('a concrete waiting reason persists across reconnect and clears when the ne
     resumed.runner.start();
     await resumed.clock.advance(60000);
     assert.equal(resumed.runner.waitReason, null);
+    assert.equal(resumed.runner.waitFor, null);
     await f.runner.close();
     await resumed.runner.close();
 });
@@ -1737,5 +1746,30 @@ test('an instruction arriving during thinking prevents the stale model response 
     f.runner.start();
     await f.clock.advance();
     assert.equal(executions, 1);
+    await f.runner.close();
+});
+
+test('native summary failure uses existing backoff without acknowledging an instruction or replaying work', async () => {
+    let acknowledgements = 0;
+    const events = [];
+    const f = await fixture({ onResponse: () => acknowledgements++, diagnostics: event => events.push(event) });
+    f.fake.script = async () => {
+        await f.fake.context();
+        f.fake.emit({ type: 'compaction_start', reason: 'threshold' });
+        f.fake.emit({
+            type: 'compaction_end',
+            reason: 'threshold',
+            result: undefined,
+            aborted: false,
+            errorMessage: 'Summary unavailable',
+        });
+    };
+    f.runner.start();
+    await f.clock.advance();
+    assert.equal(acknowledgements, 0);
+    assert.equal(f.runner.failures, 1);
+    assert.ok(f.runner.nextWakeAt > f.clock.now());
+    assert.equal(events.find(e => e.event === 'compaction_end').outcome, 'failed');
+    assert.equal(f.telemetry.length, 0);
     await f.runner.close();
 });

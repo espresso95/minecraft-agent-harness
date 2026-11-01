@@ -87,14 +87,15 @@ export class AgentInbox {
         );
     }
 
-    note() {
+    delivery() {
         const messages = this.store.unreadMessages({ limit: 20, priority: true }).filter(m => !this.offered.has(m.id));
-        if (!messages.length) return null;
         for (const message of messages) this.offered.add(message.id);
-        return (
-            `Incoming private messages (IDs identify durable mailbox records):\n${JSON.stringify(messages)}\n` +
-            'Human instructions take priority. Use work_tasks/work_claim/work_update for task state; message IDs are receipts. Progress notices do not require a reply. Never acknowledge an acknowledgement. Read receipts do not mean tasks are complete.'
-        );
+        return messages.map(message => ({
+            ...message,
+            sourceKind: 'mailbox',
+            sourceId: message.id,
+            human: messagePolicy(message, this.peers).human,
+        }));
     }
 
     shouldYield() {
@@ -108,8 +109,14 @@ export class AgentInbox {
         return false;
     }
 
-    beginRequest() {
-        this.inFlight = [...this.offered];
+    beginRequest(delivered = []) {
+        this.inFlight = [
+            ...new Set(
+                delivered
+                    .filter(message => message.sourceKind === 'mailbox' && Number.isSafeInteger(message.sourceId))
+                    .map(message => message.sourceId),
+            ),
+        ];
     }
 
     finishRequest(success) {
@@ -120,9 +127,13 @@ export class AgentInbox {
         this.inFlight = [];
     }
 
-    endCycle({ failed = false } = {}) {
+    resetDelivery() {
         this.offered.clear();
         this.inFlight = [];
+    }
+
+    endCycle({ failed = false } = {}) {
+        this.resetDelivery();
         if (!failed) this.notify({ replay: true, interrupt: false });
     }
 }

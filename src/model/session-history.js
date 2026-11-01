@@ -57,8 +57,12 @@ export function createSessionHistoryTool(getEntries) {
                 signal?.throwIfAborted();
                 const index = cursor - 1;
                 const entry = entries[index],
-                    message = entry?.message;
-                if (entry?.type !== 'message' || !['user', 'assistant', 'toolResult'].includes(message?.role)) {
+                    message =
+                        entry?.type === 'custom_message' ? { role: 'user', content: entry.content } : entry?.message;
+                if (
+                    !['message', 'custom_message'].includes(entry?.type) ||
+                    !['user', 'assistant', 'toolResult'].includes(message?.role)
+                ) {
                     cursor--;
                     continue;
                 }

@@ -39,10 +39,10 @@ test('75 unread messages all notify and drain in full only after successful mode
     assert.ok(f.observer.messages().messages.every(m => !m.readByRecipient));
     let delivered = 0;
     while (f.store.unreadMessages().length) {
-        const note = f.inbox.note();
-        assert.match(note, /TAIL-/);
-        assert.ok(note.includes('x'.repeat(500)));
-        f.inbox.beginRequest();
+        const note = f.inbox.delivery();
+        assert.match(JSON.stringify(note), /TAIL-/);
+        assert.ok(JSON.stringify(note).includes('x'.repeat(500)));
+        f.inbox.beginRequest(note);
         delivered += f.inbox.inFlight.length;
         f.inbox.finishRequest(true);
     }
@@ -63,8 +63,8 @@ test('checkpoints ignore routine progress and never consume new actionable messa
     f.store.receiveDM('Human', 'Change the plan', { urgent: true });
     assert.equal(f.inbox.shouldYield(), true);
     assert.equal(f.observer.messages().messages.find(m => m.id === id).readByRecipient, false);
-    f.inbox.note();
-    f.inbox.beginRequest();
+    const pending = f.inbox.delivery();
+    f.inbox.beginRequest(pending);
     f.inbox.finishRequest(true);
     assert.equal(f.inbox.shouldYield(), false);
 });
@@ -78,7 +78,7 @@ test('old unread records never hide newer messages or a human whisper arriving b
     f.inbox.notify();
     assert.equal(f.inbox.cursor, human);
     assert.ok(f.store.unreadMessages({ after: peer - 1 }).some(m => m.id === peer));
-    assert.match(f.inbox.note(), /First, stop and help me/);
+    assert.match(JSON.stringify(f.inbox.delivery()), /First, stop and help me/);
     assert.equal(f.interrupts.length, 1);
 });
 
@@ -86,8 +86,8 @@ test('UI history and notifications do not acknowledge messages; failure and rest
     const f = fixture(t);
     f.sender.sendDM('Bram', 'A complete task description');
     f.inbox.notify();
-    f.inbox.note();
-    f.inbox.beginRequest();
+    const pending = f.inbox.delivery();
+    f.inbox.beginRequest(pending);
     f.inbox.finishRequest(false);
     f.inbox.endCycle({ failed: true });
     assert.equal(f.observer.messages().messages[0].readByRecipient, false);
@@ -97,8 +97,9 @@ test('UI history and notifications do not acknowledge messages; failure and rest
         getRunner: () => null,
         actions: { status: {} },
     });
-    assert.match(restarted.note(), /A complete task description/);
-    restarted.beginRequest();
+    const pendingAgain = restarted.delivery();
+    assert.match(JSON.stringify(pendingAgain), /A complete task description/);
+    restarted.beginRequest(pendingAgain);
     restarted.finishRequest(true);
     assert.equal(f.observer.messages().messages[0].readByRecipient, true);
 });

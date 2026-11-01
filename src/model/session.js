@@ -13,7 +13,15 @@ export async function createMinecraftSession(options, dependencies = {}) {
     return runner;
 }
 
-
+export function contextCompaction(model) {
+    const window = model.contextWindow;
+    if (!Number.isSafeInteger(window) || window < 4096)
+        throw new Error('Selected model needs valid context-window metadata');
+    const target = Math.min(64000, Math.floor(window * 0.75));
+    if (Number.isSafeInteger(model.maxTokens) && model.maxTokens > window - target)
+        throw new Error('Compaction budget leaves insufficient model output headroom');
+    return { enabled: true, reserveTokens: window - target, keepRecentTokens: Math.min(24000, Math.floor(target / 2)) };
+}
 
 export async function createPiSession(options, modules) {
     const sdk = modules?.sdk ?? (await import('@earendil-works/pi-coding-agent'));
@@ -35,7 +43,7 @@ export async function createPiSession(options, modules) {
         ? await registerCompatibleModel(modelRuntime, m, options, modules)
         : await resolveCatalogModel(modelRuntime, m, options);
     const settingsManager = sdk.SettingsManager.inMemory({
-        compaction: { enabled: true },
+        compaction: contextCompaction(model),
         retry: { enabled: false, provider: { maxRetries: 0 } },
         enableAnalytics: false,
         enableInstallTelemetry: false,
@@ -433,6 +441,7 @@ class MinecraftSession {
                             code = failureCode(result, signal);
                             errorText = result?.details?.error ?? result?.content?.find?.(c => c.type === 'text')?.text;
                         }
+                        if (modelFacing) await this.deliverInbox();
                         const note = modelFacing ? this.options.toolResultNote?.() : null;
                         if (note)
                             result = {
@@ -552,7 +561,10 @@ class MinecraftSession {
                     retry: Boolean(cycle.imagesDisabled),
                     removed,
                 });
-            this.options.beforeRequest?.();
+            const delivered = messages
+                .filter(message => message.role === 'custom' && message.customType === 'minecraft_inbox')
+                .flatMap(message => message.details?.messages ?? []);
+            this.options.beforeRequest?.(delivered);
             return outgoing;
         };
         const originalPayload = this.session.agent.onPayload?.bind(this.session.agent);
@@ -563,6 +575,27 @@ class MinecraftSession {
             return this.options.cacheBreakpoint === false ? base : markCacheBreakpoint(base);
         };
         this.unsubscribe = this.session.subscribe(event => {
+            if (event.type === 'compaction_start') {
+                this.compactionStartedAt = this.clock.now();
+                this.diagnose({ event: 'compaction_start', reason: event.reason });
+            }
+            if (event.type === 'compaction_end') {
+                this.diagnose({
+                    event: 'compaction_end',
+                    reason: event.reason,
+                    durationMs: this.compactionStartedAt == null ? null : this.clock.now() - this.compactionStartedAt,
+                    outcome: event.aborted ? 'cancelled' : event.result ? 'success' : 'failed',
+                    tokensBefore: event.result?.tokensBefore ?? null,
+                    estimatedTokensAfter: event.result?.estimatedTokensAfter ?? null,
+                    summaryUsage: event.result?.usage ?? null,
+                });
+                this.compactionStartedAt = null;
+                if (!event.result && !event.aborted && event.errorMessage) {
+                    if (this.active) this.active.failed = true;
+                    this.reportModelError(event.errorMessage);
+                }
+                this.options.onCompaction?.(event);
+            }
             if (event.type === 'tool_execution_end' && ['wait', 'standby'].includes(this.active?.stop))
                 this.abortAgent();
             if (event.type === 'message_end' && event.message?.role === 'assistant') {
@@ -733,6 +766,22 @@ class MinecraftSession {
         this.abortAgent();
     }
 
+    async deliverInbox() {
+        const messages = this.options.inboxDelivery?.() ?? [];
+        if (!messages.length) return;
+        await this.session.sendCustomMessage(
+            {
+                customType: 'minecraft_inbox',
+                display: false,
+                details: { messages },
+                content:
+                    'Incoming private messages. Human instructions take priority over teammate suggestions. Source IDs identify original durable receipts for work planning. Read receipts do not prove completion. Progress notices need no acknowledgement; never acknowledge an acknowledgement.\n' +
+                    JSON.stringify(messages),
+            },
+            { deliverAs: 'steer' },
+        );
+    }
+
     async runCycle() {
         if (this.active || this.paused || this.closed) return;
         const queued = [...this.queue.values()];
@@ -758,6 +807,7 @@ class MinecraftSession {
         const resume = this.resume;
         if (resume && this.options.resumeThinkingLevel) this.setThinking(this.options.resumeThinkingLevel);
         try {
+            await this.deliverInbox();
             const headline = this.options.turnHeadline?.();
             await this.session.prompt(
                 (resume ? `${resume}\n\n` : '') +
