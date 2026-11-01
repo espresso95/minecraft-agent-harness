@@ -7,6 +7,7 @@ import { Vec3 } from 'vec3';
 import { MailboxStore } from '../../src/comms/mailbox-store.js';
 import { createGameTools } from '../../src/tools/game-tools.js';
 import { canClearTerrain } from '../../src/tools/game/guards.js';
+import { installAsciiChat } from '../../src/body/chat.js';
 
 test('native completion checks observe the world and inventory; failed or invisible checks keep work open', async t => {
     const dir = mkdtempSync(join(tmpdir(), 'work-tools-')),
@@ -85,17 +86,19 @@ test('terrain policy protects constructed and unknown materials and persistent l
         assert.equal(canClearTerrain({ name }), false);
 });
 
-test('long human whispers preserve original mailbox content and stay on the private transport', async () => {
+test('long human whispers preserve mailbox text and fit after wire normalization', async () => {
     const messages = [],
         whispers = [],
-        original = 'A long report\n' + 'x'.repeat(800);
+        original = 'A long report\n' + '… → café '.repeat(80);
     const bot = {
         username: 'Worker',
         entity: { position: new Vec3(0, 65, 0) },
         game: { gameMode: 'survival' },
         players: { Human: {} },
+        chat: () => assert.fail('A DM must not use public chat'),
         whisper: (...args) => whispers.push(args),
     };
+    installAsciiChat(bot);
     const send = createGameTools({
         bot,
         whisperPlayers: true,
@@ -113,6 +116,10 @@ test('long human whispers preserve original mailbox content and stay on the priv
     assert.equal(whispers[0][0], 'Human');
     assert.ok(whispers[0][1].length + '/tell Human '.length <= 256);
     assert.match(whispers[0][1], /full message in mailbox/);
+    bot.supportFeature = () => true;
+    await send.execute('test', { to: 'human', text: original });
+    assert.ok(whispers[1][1].length + '/tell Human '.length <= 100);
+    assert.equal(messages[1].text, original);
     assert.equal(
         (await send.execute('test', { to: 'human', text: 'duplicate task API', type: 'request' })).isError,
         true,

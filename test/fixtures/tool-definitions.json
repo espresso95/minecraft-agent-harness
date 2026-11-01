@@ -189,7 +189,7 @@
     {
       "name": "gather",
       "label": "gather",
-      "description": "Collect up to count blocks of a type (oak_log, dirt, cobblestone, ...). Walks to the nearest one it can see from a standing spot, mines it with your best tool and picks up the drop, then the next. Blocks it cannot reach are skipped and the next is tried. Searches 64 blocks around you; may dig through natural terrain or pillar up to reach one. Up to ~2 minutes; returns what it got. Pass near {x,y,z} to gather around a spot you know about (seen earlier or told by another agent): it walks there first, then only collects within 24 blocks of it.",
+      "description": "Collect up to count blocks of a type (oak_log, dirt, cobblestone, ...). Walks to a visible block, mines it with your best tool and picks up the drop, then the next. Unreachable blocks are skipped. Searches visible blocks within 64 blocks; buried or occluded resources are unknown. May dig through natural terrain or pillar up to reach a visible target. Up to ~2 minutes; returns actual progress. Pass near {x,y,z} to gather around a known spot: walks there first, then only collects within 24 blocks of it.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1236,14 +1236,14 @@
     {
       "name": "post_chat",
       "label": "post chat",
-      "description": "Post public speech. No slash commands, tool-command prose or newlines. Private DM text must not be disclosed here.",
+      "description": "Post a brief announcement for everyone. Long text is split at word boundaries into game-sized messages. No slash commands, tool-command prose or newlines. Private DM text must not be disclosed here.",
       "parameters": {
         "type": "object",
         "properties": {
           "text": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 256
+            "maxLength": 2000
           }
         },
         "required": [
@@ -1518,7 +1518,7 @@
     {
       "name": "gather",
       "label": "gather",
-      "description": "Collect up to count blocks of a type (oak_log, dirt, cobblestone, ...). Walks to the nearest one it can see from a standing spot, mines it with your best tool and picks up the drop, then the next. Blocks it cannot reach are skipped and the next is tried. Searches 64 blocks around you; may dig through natural terrain or pillar up to reach one. Up to ~2 minutes; returns what it got. Pass near {x,y,z} to gather around a spot you know about (seen earlier or told by another agent): it walks there first, then only collects within 24 blocks of it.",
+      "description": "Collect up to count blocks of a type (oak_log, dirt, cobblestone, ...). Walks to a visible block, mines it with your best tool and picks up the drop, then the next. Unreachable blocks are skipped. Searches visible blocks within 64 blocks; buried or occluded resources are unknown. May dig through natural terrain or pillar up to reach a visible target. Up to ~2 minutes; returns actual progress. Pass near {x,y,z} to gather around a known spot: walks there first, then only collects within 24 blocks of it.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -2565,14 +2565,14 @@
     {
       "name": "post_chat",
       "label": "post chat",
-      "description": "Post public speech. No slash commands, tool-command prose or newlines. Private DM text must not be disclosed here.",
+      "description": "Post a brief announcement for everyone. Long text is split at word boundaries into game-sized messages. No slash commands, tool-command prose or newlines. Private DM text must not be disclosed here.",
       "parameters": {
         "type": "object",
         "properties": {
           "text": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 256
+            "maxLength": 2000
           }
         },
         "required": [
@@ -2847,7 +2847,7 @@
     {
       "name": "gather",
       "label": "gather",
-      "description": "Collect up to count blocks of a type (oak_log, dirt, cobblestone, ...). Walks to the nearest one it can see from a standing spot, mines it with your best tool and picks up the drop, then the next. Blocks it cannot reach are skipped and the next is tried. Searches 64 blocks around you; may dig through natural terrain or pillar up to reach one. Up to ~2 minutes; returns what it got. Pass near {x,y,z} to gather around a spot you know about (seen earlier or told by another agent): it walks there first, then only collects within 24 blocks of it.",
+      "description": "Collect up to count blocks of a type (oak_log, dirt, cobblestone, ...). Walks to a visible block, mines it with your best tool and picks up the drop, then the next. Unreachable blocks are skipped. Searches visible blocks within 64 blocks; buried or occluded resources are unknown. May dig through natural terrain or pillar up to reach a visible target. Up to ~2 minutes; returns actual progress. Pass near {x,y,z} to gather around a known spot: walks there first, then only collects within 24 blocks of it.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -3905,7 +3905,7 @@
     {
       "name": "work_plan",
       "label": "work plan",
-      "description": "Create a human-authorized goal and a useful task frontier atomically, or add tasks under goalId. Use sourceMessageId for a human mailbox instruction or sourceChatId for public game chat: concurrent proposals for the same broadcast reuse one plan. Each task has a stable key; after lists prerequisite keys, dependencies lists existing task IDs. Set claim:true to begin a task in this same call if it is ready and available to you; otherwise its returned state explains why it is waiting. Omit assignedTo for shared work. Plan meaningful chunks, not status steps.",
+      "description": "Reuse the goal in your observation; goalId adds independent work and delegated handoffs to it. Otherwise create a human-authorized goal and task frontier atomically. sourceMessageId/sourceChatId deduplicates the human instruction. Use stable keys; after lists prerequisite keys, dependencies lists existing IDs. Depend only on what the next useful section needs, not all project materials or preparation. Define observable checks for quantities, deliveries and construction. claim:true begins your ready task in this call. Omit assignedTo for shared work; never assign the human. Plan meaningful checked chunks, not status steps.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -4209,7 +4209,8 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 16,
-                  "pattern": "^[A-Za-z0-9_]+$"
+                  "pattern": "^[A-Za-z0-9_]+$",
+                  "description": "Exact registered agent from directory, never a human. Omit for shared work."
                 },
                 "scope": {
                   "type": "string",
@@ -4586,7 +4587,8 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 16,
-            "pattern": "^[A-Za-z0-9_]+$"
+            "pattern": "^[A-Za-z0-9_]+$",
+            "description": "Exact registered agent from directory, never a human. Omit for shared work."
           },
           "scope": {
             "type": "string",
@@ -4927,14 +4929,14 @@
     {
       "name": "post_chat",
       "label": "post chat",
-      "description": "Post public speech. No slash commands, tool-command prose or newlines. Private DM text must not be disclosed here.",
+      "description": "Post a brief announcement for everyone. Long text is split at word boundaries into game-sized messages. No slash commands, tool-command prose or newlines. Private DM text must not be disclosed here.",
       "parameters": {
         "type": "object",
         "properties": {
           "text": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 256
+            "maxLength": 2000
           }
         },
         "required": [

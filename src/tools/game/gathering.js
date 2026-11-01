@@ -2,6 +2,9 @@ import { abortError, failWith } from './failures.js';
 import { canClearTerrain, SAFE_DROP, fmtDrop, openDropBelow } from './guards.js';
 import { gatherSkips, posKey, requireFunction, settleInventory, untilAbort } from './runtime.js';
 import { coords, count, name, object } from './schema.js';
+import { SIGHT_RANGE } from '../../skills/perception.js';
+
+const NEAR_R = 24;
 
 export function createGathering(ctx) {
     const {
@@ -21,8 +24,8 @@ export function createGathering(ctx) {
     } = ctx;
     add(
         'gather',
-        'Collect up to count blocks of a type (oak_log, dirt, cobblestone, ...). Walks to the nearest one it can see from a standing spot, mines it with your best tool and picks up the drop, then the next. Blocks it cannot reach are skipped and the next is tried. Searches 64 blocks around you; may dig through natural terrain or pillar up to reach one. Up to ~2 minutes; returns what it got.' +
-            ' Pass near {x,y,z} to gather around a spot you know about (seen earlier or told by another agent): it walks there first, then only collects within 24 blocks of it.',
+        `Collect up to count blocks of a type (oak_log, dirt, cobblestone, ...). Walks to a visible block, mines it with your best tool and picks up the drop, then the next. Unreachable blocks are skipped. Searches visible blocks within ${SIGHT_RANGE} blocks; buried or occluded resources are unknown. May dig through natural terrain or pillar up to reach a visible target. Up to ~2 minutes; returns actual progress.` +
+            ` Pass near {x,y,z} to gather around a known spot: walks there first, then only collects within ${NEAR_R} blocks of it.`,
         { block: name, count, near: object(coords) },
         async (a, { bot: active, signal }) => {
             const counts = () =>
@@ -51,7 +54,8 @@ export function createGathering(ctx) {
             let mined = 0,
                 misses = 0,
                 stopCode = null,
-                yielded = false;
+                yielded = false,
+                visible = [];
             const onAbort = () => {
                 try {
                     active.pathfinder.setGoal(null);
@@ -59,8 +63,7 @@ export function createGathering(ctx) {
                 } catch {}
             };
             signal?.addEventListener('abort', onAbort, { once: true });
-            const NEAR_R = 24,
-                near = a.near;
+            const near = a.near;
             const dNear = p => Math.hypot(p.x - near.x, p.y - near.y, p.z - near.z);
             try {
                 if (near && dNear(active.entity.position) > 16) {
@@ -94,7 +97,8 @@ export function createGathering(ctx) {
                         break;
                     }
                     const now = Date.now();
-                    const target = requireFunction(world, 'getNearestBlocks')(active, types, 64, near ? 256 : 64).find(
+                    visible = requireFunction(world, 'getNearestBlocks')(active, types, SIGHT_RANGE, near ? 256 : 64);
+                    const target = visible.find(
                         b =>
                             b.diggable !== false &&
                             (!near || dNear(b.position) <= NEAR_R) &&
@@ -133,23 +137,23 @@ export function createGathering(ctx) {
                         { tried: skipped.slice(0, 6) },
                     );
                 }
-                const far = requireFunction(world, 'getNearestBlocks')(active, types, 256, 1)[0];
-                const p = active.entity.position;
-                if (near)
-                    throw failWith(
-                        'not_found',
-                        `No reachable ${a.block} within ${NEAR_R} blocks of ${near.x},${near.y},${near.z} (you are at ${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}). It may be gone, out of view or buried.` +
-                            (far
-                                ? ` Nearest ${far.name} you can see is at ${far.position.x},${far.position.y},${far.position.z} (${Math.round(p.distanceTo(far.position))} blocks away).`
-                                : ''),
-                        far ? { near, nearest: { x: far.position.x, y: far.position.y, z: far.position.z } } : { near },
-                    );
+                const nearest = visible[0],
+                    area = near
+                        ? `within ${NEAR_R} blocks of ${near.x},${near.y},${near.z}`
+                        : `within ${SIGHT_RANGE} blocks of you`;
                 throw failWith(
                     'not_found',
-                    far
-                        ? `No reachable ${a.block} within 64 blocks. Nearest seen is ${far.name} at ${far.position.x},${far.position.y},${far.position.z} (${Math.round(p.distanceTo(far.position))} blocks away): go_to near it, then gather again.`
-                        : `No ${a.block} in the loaded world around you (256 blocks). Explore in a new direction with go_to, then gather again.`,
-                    far ? { nearest: { x: far.position.x, y: far.position.y, z: far.position.z } } : {},
+                    `No eligible visible ${a.block} ${area}. Search covers line-of-sight within ${SIGHT_RANGE} blocks; buried, occluded and unvisited resources are unknown.` +
+                        (nearest
+                            ? ` Nearest visible ${nearest.name} is at ${nearest.position.x},${nearest.position.y},${nearest.position.z}; candidates may be outside the requested area or temporarily skipped after earlier failures.`
+                            : '') +
+                        ' Inspect nearby natural terrain or explore reachable ground before trying again.',
+                    {
+                        searchRadius: SIGHT_RANGE,
+                        visibleOnly: true,
+                        ...(near ? { near, radius: NEAR_R } : {}),
+                        ...(nearest ? { nearest: { ...nearest.position } } : {}),
+                    },
                 );
             }
             if (!signal?.aborted) await sweepDrops(active, minedAt, goals, signal);

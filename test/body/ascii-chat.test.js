@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { asciiSafe, installAsciiChat } from '../../src/body/bot.js';
+import { asciiSafe, installAsciiChat } from '../../src/body/chat.js';
 
 test('outgoing chat is made ASCII safe so servers do not show question marks', () => {
     assert.equal(

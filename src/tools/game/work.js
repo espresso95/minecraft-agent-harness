@@ -6,7 +6,13 @@ import { taskView, taskReceipt } from '../../work/task-view.js';
 const id = integer(1, Number.MAX_SAFE_INTEGER);
 const dependencies = { type: 'array', items: id, minItems: 0, maxItems: 64 };
 const checks = workChecks;
-const definition = { dependencies, assignedTo: peer, scope: text(2000, 0), checks, priority: integer(-100, 100) };
+const definition = {
+    dependencies,
+    assignedTo: { ...peer, description: 'Exact registered agent from directory, never a human. Omit for shared work.' },
+    scope: text(2000, 0),
+    checks,
+    priority: integer(-100, 100),
+};
 
 export function createWork(ctx) {
     const { add, bot, mailbox, peers, perception, runner } = ctx;
@@ -19,7 +25,7 @@ export function createWork(ctx) {
             );
     add(
         'work_plan',
-        'Create a human-authorized goal and a useful task frontier atomically, or add tasks under goalId. Use sourceMessageId for a human mailbox instruction or sourceChatId for public game chat: concurrent proposals for the same broadcast reuse one plan. Each task has a stable key; after lists prerequisite keys, dependencies lists existing task IDs. Set claim:true to begin a task in this same call if it is ready and available to you; otherwise its returned state explains why it is waiting. Omit assignedTo for shared work. Plan meaningful chunks, not status steps.',
+        'Reuse the goal in your observation; goalId adds independent work and delegated handoffs to it. Otherwise create a human-authorized goal and task frontier atomically. sourceMessageId/sourceChatId deduplicates the human instruction. Use stable keys; after lists prerequisite keys, dependencies lists existing IDs. Depend only on what the next useful section needs, not all project materials or preparation. Define observable checks for quantities, deliveries and construction. claim:true begins your ready task in this call. Omit assignedTo for shared work; never assign the human. Plan meaningful checked chunks, not status steps.',
         {
             goalId: id,
             title: text(2000),

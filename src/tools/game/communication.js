@@ -1,5 +1,6 @@
 import { assertSurvival, requireFunction } from './runtime.js';
 import { integer, peer, text } from './schema.js';
+import { chatChunks, chatLimit, chatPreview } from '../../body/chat.js';
 
 export function createCommunication(ctx) {
     const { add, bot, mailbox, peers, plan, whisperPlayers } = ctx;
@@ -43,14 +44,7 @@ export function createCommunication(ctx) {
                 if (player && !teammate) {
                     // One bounded whisper avoids chat-spam kicks; the complete original
                     // remains available in both mailbox interfaces.
-                    const line = a.text.replace(/[\r\n]+/g, ' '),
-                        suffix = '… (full message in mailbox)';
-                    const limit = (bot.supportFeature?.('lessCharsInChat') ? 100 : 256) - `/tell ${player} `.length;
-                    const preview =
-                        line.length > limit
-                            ? line.slice(0, limit - suffix.length).replace(/[\uD800-\uDBFF]$/, '') + suffix
-                            : line;
-                    bot.whisper(player, preview);
+                    bot.whisper(player, chatPreview(a.text, chatLimit(bot, player), '... (full message in mailbox)'));
                 }
                 return { sent: true, id, recipient };
             },
@@ -77,8 +71,8 @@ export function createCommunication(ctx) {
     }
     add(
         'post_chat',
-        'Post public speech. No slash commands, tool-command prose or newlines. Private DM text must not be disclosed here.',
-        { text: text(256) },
+        'Post a brief announcement for everyone. Long text is split at word boundaries into game-sized messages. No slash commands, tool-command prose or newlines. Private DM text must not be disclosed here.',
+        { text: text(2000) },
         a => {
             if (
                 !a.text.trim() ||
@@ -88,9 +82,12 @@ export function createCommunication(ctx) {
                 /![A-Za-z]+/.test(a.text)
             )
                 throw new Error('Use plain speech, without commands or newlines.');
+            const chunks = chatChunks(a.text, chatLimit(bot));
+            if (!chunks.length || chunks.some(line => line.trimStart().startsWith('/')))
+                throw new Error('Use plain speech, without commands.');
             assertSurvival(bot);
-            bot.chat(a.text);
-            return { posted: true };
+            for (const line of chunks) bot.chat(line);
+            return { posted: true, messages: chunks.length };
         },
     );
     if (plan) {

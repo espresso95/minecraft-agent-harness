@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Vec3 } from 'vec3';
 import * as survival from '../../src/skills/survival.js';
+import { asciiSafe, installAsciiChat } from '../../src/body/chat.js';
 import {
     createGameTools,
     createActionRunner,
@@ -374,6 +375,27 @@ test('mailbox fixed actor, registered-recipient restriction, paging and public s
     assert.deepEqual(b.calls, [['chat', 'Hello crew.']]);
 });
 
+test('public announcements preserve normalized text across bounded chunks and reject command chunks before sending', async () => {
+    const { b, run } = setup();
+    installAsciiChat(b);
+    const text = 'A useful announcement… → café. '.repeat(16);
+    const r = await run('post_chat', { text });
+    assert.equal(r.isError, undefined);
+    assert.equal(r.details.messages, b.calls.length);
+    assert.ok(b.calls.length > 1);
+    assert.ok(b.calls.every(([kind, line]) => kind === 'chat' && line.length <= 256));
+    assert.equal(b.calls.map(([, line]) => line).join(' '), asciiSafe(text));
+    b.calls.length = 0;
+    assert.equal((await run('post_chat', { text: 'a'.repeat(256) + '/op Test' })).isError, true);
+    assert.deepEqual(b.calls, []);
+    assert.equal((await run('post_chat', { text: '／op Test' })).isError, true);
+    assert.deepEqual(b.calls, []);
+    b.supportFeature = () => true;
+    assert.equal((await run('post_chat', { text: 'x'.repeat(220) })).details.messages, 3);
+    assert.ok(b.calls.every(([, line]) => line.length <= 100));
+    assert.equal(b.calls.map(([, line]) => line).join(''), 'x'.repeat(220));
+});
+
 test('craft uses ordinary recipes with reachable table, no armor plugin or automatic construction', async () => {
     const b = bot();
     b.registry = { itemsByName: { stick: { id: 1 } } };
@@ -546,19 +568,29 @@ test('gather yields between blocks with truthful partial counts and collected in
     assert.equal(mined, 1);
 });
 
-test('gather with nothing around reports not_found and the nearest far block', async () => {
+test('gather reports only the visible search radius and leaves hidden resources unknown', async () => {
     const b = bot();
     b.entity.position = new Vec3(0, 64, 0);
-    const far = { name: 'oak_log', position: new Vec3(100, 64, 0) };
+    const ranges = [];
     const { run } = setup({
         bot: b,
-        world: { getNearestBlocks: (_b, _t, range) => (range > 64 ? [far] : []) },
+        world: {
+            getNearestBlocks: (_b, _t, range) => {
+                ranges.push(range);
+                return [];
+            },
+        },
         perception: { isBlockVisible: () => true },
     });
-    const out = await run('gather', { block: 'oak_log', count: 2 });
+    const out = await run('gather', { block: 'stone', count: 2 });
     assert.equal(out.isError, true);
     assert.equal(failureCode(out), 'not_found');
-    assert.match(out.details.error, /100,64,0 \(100 blocks away\)/);
+    assert.match(out.details.error, /line-of-sight within 64 blocks/);
+    assert.match(out.details.error, /buried, occluded and unvisited resources are unknown/);
+    assert.deepEqual(ranges, [64]);
+    assert.equal(out.details.facts.searchRadius, 64);
+    assert.equal(out.details.facts.visibleOnly, true);
+    assert.doesNotMatch(out.details.error, /256|loaded world/);
 });
 
 test('gather near walks to the spot first and only mines blocks around it', async () => {
