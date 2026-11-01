@@ -13,6 +13,7 @@ export const profiles = ['Scout', 'Builder', 'Watcher'].map(name => ({ ...defaul
 export const catalog = modelCatalog([
     {
         provider: 'openai',
+        api: 'openai-responses',
         id: 'gpt-6-luna',
         name: 'Luna',
         reasoning: true,

@@ -8,6 +8,28 @@ import { join } from 'node:path';
 import { ManagedAgents } from '../../src/controller/managed-agents.js';
 import { UsageLedger } from '../../src/controller/usage-ledger.js';
 
+test('unsupported compaction connections preserve profiles paused without launching or retrying workers', async t => {
+    const dir = mkdtempSync(join(tmpdir(), 'native-policy-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const config = { name: 'SavedClaude', model: 'claude-code/test', thinking: 'xhigh' };
+    const manager = new ManagedAgents({
+        agents: [config],
+        stateDir: dir,
+        modelProblem: () => 'Provider-native compaction unavailable',
+        spawnWorker: () => {
+            throw Error('Must not launch');
+        },
+    });
+    assert.equal(manager.start(config.name, { paused: true }), false);
+    const entry = manager.entries.get(config.name);
+    assert.equal(entry.state, 'paused');
+    assert.equal(entry.desiredPaused, true);
+    assert.equal(entry.config, config);
+    await assert.rejects(manager.command(config.name, 'resume'), /Provider-native compaction unavailable/);
+    assert.equal(entry.child, null);
+    await manager.close();
+});
+
 test('managed lifecycle handles immediate exits and recovers split UTF-8 usage without double counting', async t => {
     const dir = mkdtempSync(join(tmpdir(), 'managed-agents-'));
     const ledger = new UsageLedger(join(dir, 'usage.sqlite'));

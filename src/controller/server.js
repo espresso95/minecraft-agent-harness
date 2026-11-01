@@ -85,6 +85,7 @@ export async function createCompanionController({
                     ledger,
                     session,
                     worldRules: () => serverRules?.snapshot(),
+                    modelProblem: id => catalog.snapshot().models.find(model => model.id === id)?.compaction?.reason,
                     onMailboxCommit: routeMailbox,
                     onWorkerStop: recoverWork,
                 }),

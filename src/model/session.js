@@ -6,21 +6,12 @@ import { registerClaudeCode } from './claude-code.js';
 import { findModel } from './extra-models.js';
 import { subscriptionProblem } from './auth.js';
 import { sanitizeImages, isImageRejection, redactPayloads } from './image-guard.js';
+import { NativeCompaction, nativeCompactionModel } from './native-compaction.js';
 
 export async function createMinecraftSession(options, dependencies = {}) {
     const runner = new MinecraftSession(options, dependencies);
     await runner.init();
     return runner;
-}
-
-export function contextCompaction(model) {
-    const window = model.contextWindow;
-    if (!Number.isSafeInteger(window) || window < 4096)
-        throw new Error('Selected model needs valid context-window metadata');
-    const target = Math.min(64000, Math.floor(window * 0.75));
-    if (Number.isSafeInteger(model.maxTokens) && model.maxTokens > window - target)
-        throw new Error('Compaction budget leaves insufficient model output headroom');
-    return { enabled: true, reserveTokens: window - target, keepRecentTokens: Math.min(24000, Math.floor(target / 2)) };
 }
 
 export async function createPiSession(options, modules) {
@@ -39,11 +30,13 @@ export async function createPiSession(options, modules) {
         if (problem) throw new Error(problem);
     }
     if (m.provider === 'claude-code') await registerClaudeCode(modelRuntime, modules?.modelRequest);
-    const model = m.baseUrl
+    const selected = m.baseUrl
         ? await registerCompatibleModel(modelRuntime, m, options, modules)
         : await resolveCatalogModel(modelRuntime, m, options);
+    const model = nativeCompactionModel(selected);
     const settingsManager = sdk.SettingsManager.inMemory({
-        compaction: contextCompaction(model),
+        compaction: { enabled: false },
+        cacheWarming: 'off',
         retry: { enabled: false, provider: { maxRetries: 0 } },
         enableAnalytics: false,
         enableInstallTelemetry: false,
@@ -79,6 +72,7 @@ export async function createPiSession(options, modules) {
         session,
         sessionManager,
         compatible: Boolean(m.baseUrl),
+        nativeCompaction: new NativeCompaction(model, sessionManager, modules?.fetch),
     };
 }
 
@@ -247,7 +241,7 @@ function safeErrorMetadata(error) {
     return metadata;
 }
 const FATAL_MODEL_ERROR =
-    /\b(401|403)\b|invalid_grant|refresh_token_(reused|expired|invalidated)|invalid.{0,3}(x-)?api.{0,3}key|incorrect api key|authentication|unauthori[sz]ed|permission_denied|no api key|api key not|credit balance|insufficient_quota|billing|model_not_found|not_found_error|model.{0,40}(not found|does not exist)/i;
+    /\b(401|403)\b|invalid_grant|refresh_token_(reused|expired|invalidated)|invalid.{0,3}(x-)?api.{0,3}key|incorrect api key|authentication|unauthori[sz]ed|permission_denied|no api key|api key not|credit balance|insufficient_quota|billing|model_not_found|not_found_error|model.{0,40}(not found|does not exist)|provider-native compaction|context_management/i;
 
 export function interruptedTurn(entries, max = 1500) {
     const last = entries.filter(entry => entry.type === 'message').at(-1)?.message;
@@ -490,6 +484,13 @@ class MinecraftSession {
         this.session = result.session;
         this.compatible = result.compatible !== false;
         this.manager = result.sessionManager ?? this.session.sessionManager;
+        const native = result.nativeCompaction;
+        if (native) {
+            native.diagnose = event => this.diagnose(event);
+            const stream = this.session.agent.streamFunction;
+            this.session.agent.streamFunction = (model, context, options) =>
+                stream(model, context, { ...options, fetch: native.fetch(options?.fetch) });
+        }
         const messages = this.manager.getEntries().filter(entry => entry.type === 'message').length;
         this.sessionInfo = { file: this.manager.getSessionFile?.() ?? null, resumed: messages > 0, messages };
         const interrupted = messages > 0 ? interruptedTurn(this.manager.getEntries()) : null;
@@ -534,7 +535,8 @@ class MinecraftSession {
                 this.requestWait(observation.waitUntil);
                 throw stopError();
             }
-            const previous = originalTransform ? await originalTransform(messages, signal) : messages;
+            const transformed = originalTransform ? await originalTransform(messages, signal) : messages;
+            const previous = native ? native.context(transformed) : transformed;
             if (cycle.stop || signal?.aborted) throw stopError();
             const { messages: outgoing, removed } = sanitizeImages(
                 [
@@ -560,7 +562,7 @@ class MinecraftSession {
                     retry: Boolean(cycle.imagesDisabled),
                     removed,
                 });
-            const delivered = messages
+            const delivered = previous
                 .filter(message => message.role === 'custom' && message.customType === 'minecraft_inbox')
                 .flatMap(message => message.details?.messages ?? []);
             this.options.beforeRequest?.(delivered);
@@ -569,37 +571,19 @@ class MinecraftSession {
         const originalPayload = this.session.agent.onPayload?.bind(this.session.agent);
         this.session.agent.onPayload = async (payload, model) => {
             const base = originalPayload ? ((await originalPayload(payload, model)) ?? payload) : payload;
-            if (!this.compatible) return base;
-            if (/claude/i.test(String(base?.model ?? model?.id ?? ''))) return anthropicPayload(base);
-            return this.options.cacheBreakpoint === false ? base : markCacheBreakpoint(base);
+            const outgoing = native ? native.payload(base) : base;
+            if (!this.compatible) return outgoing;
+            if (/claude/i.test(String(outgoing?.model ?? model?.id ?? ''))) return anthropicPayload(outgoing);
+            return this.options.cacheBreakpoint === false ? outgoing : markCacheBreakpoint(outgoing);
         };
         this.unsubscribe = this.session.subscribe(event => {
-            if (event.type === 'compaction_start') {
-                this.compactionStartedAt = this.clock.now();
-                this.diagnose({ event: 'compaction_start', reason: event.reason });
-            }
-            if (event.type === 'compaction_end') {
-                this.diagnose({
-                    event: 'compaction_end',
-                    reason: event.reason,
-                    durationMs: this.compactionStartedAt == null ? null : this.clock.now() - this.compactionStartedAt,
-                    outcome: event.aborted ? 'cancelled' : event.result ? 'success' : 'failed',
-                    tokensBefore: event.result?.tokensBefore ?? null,
-                    estimatedTokensAfter: event.result?.estimatedTokensAfter ?? null,
-                    summaryUsage: event.result?.usage ?? null,
-                });
-                this.compactionStartedAt = null;
-                if (!event.result && !event.aborted && event.errorMessage) {
-                    if (this.active) this.active.failed = true;
-                    this.reportModelError(event.errorMessage);
-                }
-                this.options.onCompaction?.(event);
-            }
             if (event.type === 'tool_execution_end' && ['wait', 'standby'].includes(this.active?.stop))
                 this.abortAgent();
             if (event.type === 'message_end' && event.message?.role === 'assistant') {
+                const compacted = native?.commit(event.message);
                 if (this.active)
                     metric(this.options.onResponse, !['error', 'aborted'].includes(event.message.stopReason));
+                if (compacted) this.options.onCompaction?.({ mechanism: 'provider-native' });
                 const said = textOf(event.message).trim();
                 if (said) metric(this.options.onText, said);
             }

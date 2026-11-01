@@ -148,6 +148,7 @@ test('both clients receive a refreshed catalog signature when native model choic
     const unchanged = catalog.snapshot().version;
     catalog.setClaude([entry]);
     assert.equal(catalog.snapshot().version, unchanged);
+    assert.equal(catalog.snapshot().models[0].compaction.supported, false);
     catalog.validate({ model: { provider: 'claude-code', id: entry.resolvedModel }, thinking: 'xhigh' });
     assert.throws(
         () => catalog.validate({ model: { provider: 'claude-code', id: entry.resolvedModel }, thinking: 'high' }),

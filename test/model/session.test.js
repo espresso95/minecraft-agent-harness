@@ -737,7 +737,13 @@ test('Pi factory uses verified APIs: native-only, compatible Responses endpoint 
     const root = await mkdtemp(join(tmpdir(), 'pi-session-contract-'));
     try {
         const calls = {};
-        const model = { id: 'test-model', contextWindow: 128000, maxTokens: 8192 };
+        const model = {
+            provider: 'openai',
+            api: 'openai-responses',
+            id: 'test-model',
+            contextWindow: 128000,
+            maxTokens: 8192,
+        };
         const sdk = {
             SettingsManager: {
                 inMemory: settings => {
@@ -824,7 +830,10 @@ test('Pi factory uses verified APIs: native-only, compatible Responses endpoint 
         assert.equal(calls.loader.noContextFiles, true);
         assert.equal(calls.loader.noExtensions, true);
         assert.equal(calls.loader.systemPrompt, 'Only explicit rules');
-        assert.equal(calls.settings.compaction.enabled, true);
+        assert.equal(calls.settings.compaction.enabled, false);
+        assert.equal(calls.settings.cacheWarming, 'off');
+        assert.equal(calls.session.model.compat.supportsAdditionalTools, false);
+        assert.equal(calls.session.model.compat.supportsMidConvoSystemMessages, false);
         assert.equal(calls.settings.retry.enabled, false);
         assert.equal(calls.runtime.allowModelNetwork, false);
         assert.equal(calls.persistence.dir, join(root, 'one'));
@@ -1749,27 +1758,20 @@ test('an instruction arriving during thinking prevents the stale model response 
     await f.runner.close();
 });
 
-test('native summary failure uses existing backoff without acknowledging an instruction or replaying work', async () => {
+test('provider checkpoint errors stop the request without acknowledging an instruction or replaying work', async () => {
     let acknowledgements = 0;
     const events = [];
     const f = await fixture({ onResponse: () => acknowledgements++, diagnostics: event => events.push(event) });
     f.fake.script = async () => {
         await f.fake.context();
-        f.fake.emit({ type: 'compaction_start', reason: 'threshold' });
-        f.fake.emit({
-            type: 'compaction_end',
-            reason: 'threshold',
-            result: undefined,
-            aborted: false,
-            errorMessage: 'Summary unavailable',
-        });
+        throw new Error('Provider-native compaction checkpoint could not be saved');
     };
     f.runner.start();
     await f.clock.advance();
     assert.equal(acknowledgements, 0);
     assert.equal(f.runner.failures, 1);
     assert.ok(f.runner.nextWakeAt > f.clock.now());
-    assert.equal(events.find(e => e.event === 'compaction_end').outcome, 'failed');
+    assert.equal(events.filter(e => e.event === 'compaction_end').length, 0);
     assert.equal(f.telemetry.length, 0);
     await f.runner.close();
 });

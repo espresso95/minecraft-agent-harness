@@ -29,6 +29,7 @@ export class ManagedAgents {
         spawnWorker = spawn,
         hostModels,
         worldRules = () => null,
+        modelProblem = () => null,
         onMailboxCommit = () => {},
         onWorkerStop = () => {},
     }) {
@@ -42,6 +43,7 @@ export class ManagedAgents {
             spawnWorker,
             hostModels,
             worldRules,
+            modelProblem,
             onMailboxCommit,
             onWorkerStop,
         });
@@ -81,6 +83,13 @@ export class ManagedAgents {
         const entry = this.entries.get(name);
         if (!entry) throw new Error('Unknown agent');
         if (entry.child || this.closing) return;
+        const problem = this.modelProblem(entry.config.model);
+        if (problem) {
+            entry.state = 'paused';
+            entry.desiredPaused = true;
+            entry.error = problem;
+            return false;
+        }
         if (this.isDead(name)) {
             entry.state = 'dead';
             entry.error = 'This companion died with permanent death enabled';

@@ -33,8 +33,9 @@ bin/minecraft-agent.js ── src/cli.js ── src/config.js ── src/agent.j
   wake the agent immediately and can interrupt the current body action. Model errors back off exponentially up to five
   minutes.
 - **Persistence.** The session lives in `.agent-state/<name>/pi-sessions/` and is resumed with
-  `SessionManager.continueRecent`, including the scheduler's next wake time. pi's automatic compaction keeps it inside
-  the context window. `session_history` searches the full transcript, including compacted turns.
+  `SessionManager.continueRecent`, including the scheduler's next wake time. Provider-native compaction shortens
+  the request context; Pi's text compaction is disabled. Opaque checkpoints are stored in the same private session,
+  scoped to the exact model and endpoint. `session_history` searches the full transcript, including compacted turns.
 
 ## The body
 

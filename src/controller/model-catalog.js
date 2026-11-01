@@ -6,6 +6,7 @@ import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { findModel, extraModelIds } from '../model/extra-models.js';
 import { defaultProfile } from './profiles.js';
 import { subscriptionProblem } from '../model/auth.js';
+import { nativeCompactionProblem } from '../model/native-compaction.js';
 
 export function modelCatalog(models) {
     let choices;
@@ -14,6 +15,11 @@ export function modelCatalog(models) {
             id: model.provider + '/' + model.id,
             name: model.name,
             efforts: getSupportedThinkingLevels(model),
+            compaction: {
+                mode: 'provider-native',
+                supported: !nativeCompactionProblem(model),
+                reason: nativeCompactionProblem(model),
+            },
         })));
     update();
     return {
