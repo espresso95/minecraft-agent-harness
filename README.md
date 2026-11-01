@@ -3,7 +3,7 @@
 <p align="center">LLM agents that play Minecraft.</p>
 
 <p align="center">
-  <a href="https://github.com/yc-software/minecraft-agent-harness/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/yc-software/minecraft-agent-harness/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/espresso95/minecraft-agent-harness/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/espresso95/minecraft-agent-harness/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="Node.js 22.19+" src="https://img.shields.io/badge/node-%E2%89%A522.19-339933?logo=node.js&logoColor=white">
   <img alt="Minecraft Java 1.21.6" src="https://img.shields.io/badge/minecraft-java%201.21.6-62B47A">
@@ -35,7 +35,31 @@ What's in here:
 - Teams from a single JSON file, with DMs between agents and an optional shared machine
 - Vision, if you want it (experimental)
 
-## Quickstart
+## Local companions fork
+
+This fork adds a local companion controller, ChatGPT subscription login, native and web panels, shared work and script libraries, and reported token accounting. It is based on [yc-software/minecraft-agent-harness](https://github.com/yc-software/minecraft-agent-harness).
+
+```sh
+git clone --recurse-submodules https://github.com/espresso95/minecraft-agent-harness.git
+cd minecraft-agent-harness
+npm ci
+npm run login
+npm run play
+```
+
+The local launcher targets macOS with Docker/Colima and Java 21. See the [companion guide](docs/companions.md) for setup and the **Mac mini server → laptop client** workflow over local Wi-Fi. Your server and agents stay on the Mac mini; the laptop only needs Minecraft, Fabric API and the [client mod release](https://github.com/espresso95/minecraft-companions-mod/releases/latest).
+
+The [mod has its own repository](https://github.com/espresso95/minecraft-companions-mod) and is pinned here at `mods/companion-mailbox` as a Git submodule. For an existing checkout, run `git submodule update --init --recursive`. Publish mod changes first, then commit the updated submodule pointer here. There is one copy of the mod source to maintain.
+
+Keep the original project as an `upstream` remote. Future upstream updates can be merged normally, preserving this fork's additions:
+
+```sh
+git remote add upstream https://github.com/yc-software/minecraft-agent-harness.git
+git fetch upstream
+git merge upstream/main
+```
+
+## Upstream quickstart
 
 You'll need Node 22.19+, an API key for some model provider, and a Minecraft server. If you don't have a server, the
 repo comes with a dev one, which needs Java 21.

@@ -1,0 +1,2 @@
+FROM minecraft-terra-harness:local
+COPY src/config.js /app/src/config.js

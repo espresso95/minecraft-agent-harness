@@ -62,6 +62,42 @@ test('loops of tool calls all route through invoke; tool errors exit 1 with stde
     await s.tool.close();
 });
 
+test('a checked script batch stops on the first failed game action and preserves partial output', async () => {
+    const s = await setup(async (_name, args) => {
+        if (args.y === 2) throw new Error('occupied target');
+        return { placed: 1 };
+    });
+    try {
+        const result = await s.run('set -e; for y in 1 2 3; do tool place_block "{\\"y\\":$y}"; done');
+        assert.deepEqual(
+            s.calls.map(c => c.args.y),
+            [1, 2],
+        );
+        assert.equal(result.isError, true);
+        assert.equal(result.details.ok, false);
+        assert.match(result.content[0].text, /placed/);
+        assert.match(result.content[0].text, /occupied target/);
+    } finally {
+        await s.tool.close();
+    }
+});
+
+test('two agents reuse the same script library through their own tool relays', async () => {
+    const first = await setup(async () => ({ agent: 'first' }));
+    const backend = createLocalBackend({ workdir: path.join(first.root, 'second-home'), sharedDir: first.shared });
+    const [second] = createShellTools({ backend, invoke: async () => ({ agent: 'second' }), toolList: () => [] });
+    try {
+        await first.run(
+            'printf \'#!/bin/bash\\ntool inventory\\n\' > "$SHARED_TOOLS/who"; chmod +x "$SHARED_TOOLS/who"',
+        );
+        assert.match((await first.run('who')).content[0].text, /"agent":"first"/);
+        assert.match((await second.execute('test', { cmd: 'who' })).content[0].text, /"agent":"second"/);
+    } finally {
+        await first.tool.close();
+        await second.close();
+    }
+});
+
 test('blocked tools cannot be reached from the shell; --list hides them', async () => {
     const s = await setup(async () => 'x');
     const r = await s.run(`tool run_code '{"code":"1"}'; echo "rc=$?"; tool --list`);
@@ -110,7 +146,7 @@ test('output is capped', async () => {
     await s.tool.close();
 });
 
-test('a dead backend is rebuilt once and the command retried', async () => {
+test('a failure after execution starts never replays a potentially mutating script', async () => {
     let starts = 0,
         runs = 0;
     const backend = {
@@ -127,8 +163,9 @@ test('a dead backend is rebuilt once and the command retried', async () => {
     };
     const [tool] = createShellTools({ backend, invoke: async () => 1, toolList: () => [] });
     const r = await tool.execute('t', { cmd: 'echo hi' });
-    assert.equal(starts, 2);
-    assert.equal(runs, 2);
-    assert.match(r.content[0].text, /ok echo hi/);
-    assert.equal(r.details.ok, true);
+    assert.equal(starts, 1);
+    assert.equal(runs, 1);
+    assert.match(r.content[0].text, /sandbox not found/);
+    assert.equal(r.details.ok, false);
+    assert.equal(r.isError, true);
 });

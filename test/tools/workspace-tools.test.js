@@ -266,6 +266,7 @@ test('search deadline and abort complete even when injected provider ignores sig
 test('wait requests injected absolute idle deadline immediately, never a sleep', async t => {
     const deadlines = [];
     const f = await fixture(t, { now: () => 10000, onWait: async ms => deadlines.push(ms) });
+    assert.equal(f.tools.find(tool => tool.name === 'wait').idle, true);
     assert.deepEqual(data(await f.call('wait', { seconds: 60 })), { requestedIdleUntil: 70000 });
     assert.deepEqual(deadlines, [70000]);
     denied(await f.call('wait', { seconds: 0 }));
@@ -288,6 +289,24 @@ test('trusted limit configuration cannot disable guardrails', async t => {
     ]) {
         await assert.rejects(createWorkspaceTools({ privateRoot, sharedRoot, limits }));
     }
+});
+
+test('standby is an optional idle capability; invalid or aborted requests cannot enter it', async t => {
+    let calls = 0;
+    const f = await fixture(t, {
+        onStandby: () => {
+            calls++;
+            return { standby: true };
+        },
+    });
+    assert.equal(f.tools.find(tool => tool.name === 'standby').idle, true);
+    denied(await f.call('standby', { ignored: true }));
+    const abort = new AbortController();
+    abort.abort();
+    denied(await f.call('standby', {}, abort.signal));
+    assert.equal(calls, 0);
+    assert.deepEqual(data(await f.call('standby', {})), { standby: true });
+    assert.equal(calls, 1);
 });
 
 test('UTF-8 paging preserves whole characters, including four-byte characters and BOM', async t => {

@@ -2,7 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { installDamageWake } from '../../src/body/damage.js';
-import { causeLabel, installDamageTypes, isStarvationDamage } from '../../src/body/hurt-cause.js';
+import { causeLabel, installDamageTypes, isStarvationDamage, attackDamageStop } from '../../src/body/hurt-cause.js';
+
+test('combat handles starvation without an attacker while preserving other damage responses', () => {
+    assert.equal(attackDamageStop(undefined, 'starve', 9, 'starvation'), null);
+    assert.equal(attackDamageStop(null, 'fall', 9, 'fall'), 'environment_damage');
+    assert.equal(attackDamageStop(undefined, null, 9, 'unknown'), 'environment_damage');
+    assert.equal(attackDamageStop({ id: 9 }, null, 9, 'current target'), null);
+    assert.equal(attackDamageStop({ id: 10 }, null, 9, 'another attacker'), 'hit_by_other: another attacker');
+});
 
 function rig(active = 'gather') {
     const client = new EventEmitter();

@@ -2,6 +2,7 @@ export function installRespawn(
     bot,
     {
         allowed,
+        respawnAllowed = () => true,
         stopBody,
         pauseSession,
         resumeSession,
@@ -31,6 +32,10 @@ export function installRespawn(
     };
     const complete = () => {
         if (!pending || failed || !quiescent || !spawned) return;
+        if (!respawnAllowed()) {
+            fail('death');
+            return;
+        }
         if (!allowed()) {
             fail('contest_deadline');
             return;
@@ -42,7 +47,7 @@ export function installRespawn(
     };
     bot.on('death', () => {
         if (pending || failed) return;
-        if (!allowed()) {
+        if (!respawnAllowed() || !allowed()) {
             fail('death');
             return;
         }
@@ -74,12 +79,20 @@ export function installRespawn(
             try {
                 await stopBody();
                 if (failed || current !== generation || !pending || spawned) return;
+                if (!respawnAllowed()) {
+                    fail('death');
+                    return;
+                }
                 if (!allowed()) {
                     fail('contest_deadline');
                     return;
                 }
                 setTimeout(() => {
                     if (failed || current !== generation || !pending || spawned) return;
+                    if (!respawnAllowed()) {
+                        fail('death');
+                        return;
+                    }
                     if (!allowed()) {
                         fail('contest_deadline');
                         return;

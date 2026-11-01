@@ -1,13 +1,20 @@
 const DEFAULTS = { timeoutMs: 120000, maxTimeoutMs: 600000, outputBytes: 32768 };
 
-export function createShellTools({ backend, invoke, toolList, limits: overrides = {}, log = () => {} }) {
+export function createShellTools({
+    backend,
+    invoke,
+    toolList,
+    stopActions = async () => {},
+    limits: overrides = {},
+    log = () => {},
+}) {
     if (!backend || typeof invoke !== 'function' || typeof toolList !== 'function')
         throw new Error('backend, invoke and toolList required');
     const limits = { ...DEFAULTS, ...overrides };
     let starting = null,
         started = false,
         failures = 0;
-    const blocked = new Set(['run_shell', 'run_code', 'run_tool', 'session_history']);
+    const blocked = new Set(['run_shell', 'run_skill', 'run_code', 'run_tool', 'session_history']);
     const guardedInvoke = (name, args) =>
         blocked.has(name)
             ? Promise.reject(new Error(`Tool ${name} cannot be called from the shell.`))
@@ -48,6 +55,7 @@ export function createShellTools({ backend, invoke, toolList, limits: overrides 
                 additionalProperties: false,
             },
             async execute(_id, args, signal) {
+                let executing = false;
                 const cmd = args?.cmd;
                 if (typeof cmd !== 'string' || !cmd.trim())
                     return {
@@ -63,7 +71,6 @@ export function createShellTools({ backend, invoke, toolList, limits: overrides 
                     let r;
                     try {
                         await ensure();
-                        r = await backend.run(cmd, { timeoutMs, signal, outputBytes: limits.outputBytes });
                     } catch (error) {
                         if (signal?.aborted) throw error;
                         log(
@@ -75,8 +82,12 @@ export function createShellTools({ backend, invoke, toolList, limits: overrides 
                             await backend.close();
                         } catch {}
                         await ensure();
-                        r = await backend.run(cmd, { timeoutMs, signal, outputBytes: limits.outputBytes });
                     }
+                    // Once execution starts, a lost response must not replay game mutations.
+                    executing = true;
+                    r = await backend.run(cmd, { timeoutMs, signal, outputBytes: limits.outputBytes });
+                    if (r.timedOut || signal?.aborted) await stopActions();
+                    executing = false;
                     const text =
                         [
                             r.stdout,
@@ -88,9 +99,10 @@ export function createShellTools({ backend, invoke, toolList, limits: overrides 
                     return {
                         content: [{ type: 'text', text }],
                         details: { ok: r.exitCode === 0, result: r },
-                        isError: r.exitCode !== 0 && !r.stdout,
+                        isError: r.exitCode !== 0,
                     };
                 } catch (error) {
+                    if (executing) await stopActions();
                     failures++;
                     log(`run_shell failure ${failures}: ${String(error?.message ?? error)}`);
                     started = false;

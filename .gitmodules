@@ -1,0 +1,3 @@
+[submodule "mods/companion-mailbox"]
+	path = mods/companion-mailbox
+	url = https://github.com/espresso95/minecraft-companions-mod.git

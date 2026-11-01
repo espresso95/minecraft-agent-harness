@@ -9,7 +9,7 @@ import { containerName, createDockerBackend, dockerAvailable } from '../../src/s
 
 const RELAY = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/sandbox/assets/relay.cjs');
 
-function fakeDocker({ initial = 'missing' } = {}) {
+function fakeDocker({ initial = 'missing', workdir, sharedDir } = {}) {
     const calls = [];
     let status = initial,
         relay = null;
@@ -20,7 +20,22 @@ function fakeDocker({ initial = 'missing' } = {}) {
         if (cmd === 'inspect')
             return status === 'missing'
                 ? { code: 1, stdout: '', stderr: 'No such object' }
-                : { code: 0, stdout: status === 'running' ? 'true\n' : 'false\n', stderr: '' };
+                : {
+                      code: 0,
+                      stdout: args.includes('{{json .Mounts}}')
+                          ? JSON.stringify([
+                                { Source: workdir, Destination: '/home/agent' },
+                                ...(sharedDir ? [{ Source: sharedDir, Destination: '/opt/shared' }] : []),
+                            ])
+                          : status === 'running'
+                            ? 'true\n'
+                            : 'false\n',
+                      stderr: '',
+                  };
+        if (cmd === 'rm') {
+            status = 'missing';
+            relay?.kill('SIGKILL');
+        }
         if (cmd === 'run' || cmd === 'start') {
             status = 'running';
             return { code: 0, stdout: 'id\n', stderr: '' };
@@ -71,7 +86,7 @@ test('start creates an isolated persistent container with the state dir mounted 
 
 test('start reuses an existing container instead of creating a new one', async () => {
     const workdir = mkdtempSync(path.join(os.tmpdir(), 'dock-'));
-    const fake = fakeDocker({ initial: 'stopped' });
+    const fake = fakeDocker({ initial: 'stopped', workdir });
     const backend = createDockerBackend({ agentName: 'Ada', workdir, exec: fake.exec });
     await backend.start({ invoke: async () => ({}), tools: [] });
     assert.ok(fake.calls.some(c => c[0] === 'start'));
@@ -79,9 +94,26 @@ test('start reuses an existing container instead of creating a new one', async (
     await backend.close();
 });
 
+test('changed shared mounts recreate only the disposable container and retain private files', async () => {
+    const workdir = mkdtempSync(path.join(os.tmpdir(), 'dock-'));
+    const sharedDir = mkdtempSync(path.join(os.tmpdir(), 'dock-shared-'));
+    const fake = fakeDocker({ initial: 'running', workdir, sharedDir: '/old-private-shared-dir' });
+    const backend = createDockerBackend({ agentName: 'Ada', workdir, sharedDir, exec: fake.exec });
+    try {
+        await backend.start({ invoke: async () => ({}), tools: [] });
+        assert.ok(fake.calls.some(c => c[0] === 'rm' && c.includes('-f')));
+        const run = fake.calls.find(c => c[0] === 'run');
+        assert.ok(run.includes(`${sharedDir}:/opt/shared`));
+        assert.ok(run.includes(`${workdir}:/home/agent`));
+        assert.ok(existsSync(path.join(workdir, '.harness', 'tools.json')));
+    } finally {
+        await backend.close();
+    }
+});
+
 test('run passes the command through env, bounds it with timeout and reports timeouts', async () => {
     const workdir = mkdtempSync(path.join(os.tmpdir(), 'dock-'));
-    const fake = fakeDocker({ initial: 'running' });
+    const fake = fakeDocker({ initial: 'running', workdir });
     const backend = createDockerBackend({ agentName: 'Ada', workdir, exec: fake.exec });
     await backend.start({ invoke: async () => ({}), tools: [] });
     const r = await backend.run('echo "quoted $HOME"', { timeoutMs: 5000, outputBytes: 1000 });

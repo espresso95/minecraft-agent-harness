@@ -2,7 +2,10 @@ import js from '@eslint/js';
 import globals from 'globals';
 
 export default [
-    { ignores: ['node_modules/**', '.agent-state/**', 'test/fixtures/**'] },
+    { files: ['src/web/*.js'], languageOptions: { globals: globals.browser } },
+    {
+        ignores: ['node_modules/**', '.agent-state/**', 'test/fixtures/**', 'mods/**', 'output/**', 'results/**'],
+    },
     js.configs.recommended,
     {
         languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.node } },

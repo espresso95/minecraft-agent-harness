@@ -9,7 +9,7 @@ export const doorOpen = b => {
     return v === true || v === 'true';
 };
 
-export const KEEP_MOVING_TOOLS = new Set(['go_to', 'move', 'flee', 'return_to_surface']);
+export const KEEP_MOVING_TOOLS = new Set(['go_to', 'follow_player', 'move', 'flee', 'return_to_surface']);
 
 export function interruptsOnHit(active, hasSource) {
     const act = String(active ?? '');
@@ -145,8 +145,17 @@ export function installSwimGuard(bot) {
     });
 }
 
-export const NATURAL_TERRAIN =
-    /^(stone|dirt|grass_block|coarse_dirt|rooted_dirt|podzol|mycelium|dirt_path|farmland|mud|clay|gravel|sand|red_sand|sandstone|red_sandstone|andesite|diorite|granite|deepslate|tuff|calcite|dripstone_block|pointed_dripstone|moss_block|moss_carpet|smooth_basalt|short_grass|tall_grass|fern|large_fern|dead_bush|.*_ore|.*terracotta|snow|snow_block|ice|packed_ice|.*leaves|vine|sugar_cane)$/;
+// A conservative clearing policy, not an inference about who placed a block.
+// Unknown materials remain protected. Passability and harvestability are separate.
+const TERRAIN_MATERIALS =
+    /^(stone|dirt|grass_block|coarse_dirt|rooted_dirt|podzol|mycelium|dirt_path|farmland|mud|clay|gravel|sand|red_sand|sandstone|red_sandstone|andesite|diorite|granite|deepslate|tuff|calcite|dripstone_block|pointed_dripstone|moss_block|moss_carpet|smooth_basalt|short_grass|tall_grass|fern|large_fern|dead_bush|leaf_litter|.*_ore|.*terracotta|snow|snow_block|ice|packed_ice|.*leaves|vine|sugar_cane)$/;
+
+export function canClearTerrain(block) {
+    const properties = block?.getProperties?.() ?? block?._properties ?? {};
+    return (
+        TERRAIN_MATERIALS.test(block?.name ?? '') && properties.persistent !== true && properties.persistent !== 'true'
+    );
+}
 
 const builtBlockIds = new WeakMap();
 
@@ -162,7 +171,7 @@ export function guardBuiltBlocks(bot, movements) {
         builtBlockIds.set(
             bot,
             (ids = blocks
-                .filter(b => b.diggable !== false && !/air$/.test(b.name) && !NATURAL_TERRAIN.test(b.name))
+                .filter(b => b.diggable !== false && !/air$/.test(b.name) && !canClearTerrain(b))
                 .map(b => b.id)),
         );
     for (const id of ids) movements.blocksCantBreak.add(id);

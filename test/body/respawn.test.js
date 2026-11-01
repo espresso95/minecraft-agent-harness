@@ -87,3 +87,28 @@ test('a second death after recovery is handled again', async () => {
     assert.equal(log.resumed, 2);
     assert.deepEqual(log.finished, []);
 });
+
+test('a permanent-death policy change cancels a respawn already waiting for the body', async () => {
+    const bot = new EventEmitter(),
+        finished = [];
+    let allowed = true,
+        respawns = 0;
+    bot.respawn = () => respawns++;
+    installRespawn(bot, {
+        allowed: () => true,
+        respawnAllowed: () => allowed,
+        stopBody: async () => {
+            await sleep(30);
+        },
+        pauseSession: async () => {},
+        resumeSession: () => assert.fail('must not resume'),
+        record: () => {},
+        finish: r => finished.push(r),
+        delay: 10,
+    });
+    bot.emit('death');
+    allowed = false;
+    await sleep(80);
+    assert.equal(respawns, 0);
+    assert.deepEqual(finished, ['death']);
+});

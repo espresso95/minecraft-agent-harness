@@ -210,6 +210,17 @@ function installActionBoundary(bot) {
     if (actionBoundaries.has(bot)) return actionBoundaries.get(bot);
     const context = new AsyncLocalStorage();
     const boundary = { context, blocked: false };
+    if (typeof bot.emit === 'function') {
+        const emit = bot.emit;
+        bot.emit = function (event, ...args) {
+            const owner = boundary.owner;
+            // Native pathfinding runs on external physics ticks. Give those ticks
+            // the current action's authority, but never replace a stale owner.
+            if (event === 'physicsTick' && !context.getStore() && owner?.active && !owner.signal.aborted)
+                return context.run(owner, () => emit.call(this, event, ...args));
+            return emit.call(this, event, ...args);
+        };
+    }
     const assertCurrent = (allowUnscoped = false) => {
         const owner = context.getStore();
         if (!owner && allowUnscoped) return;
@@ -352,7 +363,13 @@ export const posKey = p => `${p.x},${p.y},${p.z}`;
 
 export function createActionRunner(
     bot,
-    { defaultTimeoutMs = 30000, maxTimeoutMs = 120000, settleTimeoutMs = 1500, onFatal = () => {} } = {},
+    {
+        defaultTimeoutMs = 30000,
+        maxTimeoutMs = 120000,
+        settleTimeoutMs = 1500,
+        onFatal = () => {},
+        onBackgroundError = () => {},
+    } = {},
 ) {
     if (
         ![defaultTimeoutMs, maxTimeoutMs, settleTimeoutMs].every(n => Number.isFinite(n) && n > 0) ||
@@ -377,9 +394,38 @@ export function createActionRunner(
             Promise.resolve(onFatal(error)).catch(() => {});
         } catch {}
     };
-    return {
+    const runner = {
         get status() {
-            return { active: current?.name ?? null, blocked: Boolean(fatal) };
+            return {
+                active: current?.name ?? null,
+                background: current?.background ?? false,
+                blocked: Boolean(fatal),
+            };
+        },
+        async start(name, fn) {
+            let ready,
+                running = false;
+            const started = new Promise(resolve => {
+                ready = () => {
+                    running = true;
+                    resolve();
+                };
+            });
+            const work = runner.run(name, context => fn({ ...context, ready }), { background: true });
+            void work.catch(error => {
+                if (running && error.name !== 'AbortError') {
+                    try {
+                        onBackgroundError(name, error);
+                    } catch {}
+                }
+            });
+            await Promise.race([
+                started,
+                work.then(() => {
+                    throw new Error(`${name} ended before starting`);
+                }),
+            ]);
+            return runner.status;
         },
         interrupt(reason) {
             current?.controller.abort(abortError(reason || 'Interrupted: you were hit'));
@@ -405,23 +451,26 @@ export function createActionRunner(
             }
             return { stopped: !fatal, blocked: Boolean(fatal) };
         },
-        async run(name, fn, { signal, timeoutMs = defaultTimeoutMs } = {}) {
+        async run(name, fn, { signal, timeoutMs = defaultTimeoutMs, background = false } = {}) {
             if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > maxTimeoutMs)
                 throw new Error('Invalid action deadline.');
             if (fatal) throw fatal;
+            if (current?.background) await runner.stop();
             const generation = stopGeneration;
             const controller = new AbortController();
             const forward = () => controller.abort(abortError('Action cancelled'));
             if (signal?.aborted) forward();
             else signal?.addEventListener('abort', forward, { once: true });
-            const deadline = Date.now() + timeoutMs;
-            const timer = setTimeout(
-                () =>
-                    controller.abort(
-                        withFailureCode(abortError(`Action deadline exceeded (${timeoutMs}ms)`), 'timeout'),
-                    ),
-                timeoutMs,
-            );
+            const deadline = background ? Infinity : Date.now() + timeoutMs;
+            const timer = background
+                ? null
+                : setTimeout(
+                      () =>
+                          controller.abort(
+                              withFailureCode(abortError(`Action deadline exceeded (${timeoutMs}ms)`), 'timeout'),
+                          ),
+                      timeoutMs,
+                  );
             let rejectAbort;
             const cancelled = new Promise((_, reject) => {
                 rejectAbort = reject;
@@ -438,8 +487,9 @@ export function createActionRunner(
                 assertSurvival(bot);
                 boundary.ensure();
                 const owner = { signal: controller.signal, active: true };
+                boundary.owner = owner;
                 started = true;
-                current = { name, controller };
+                current = { name, controller, background };
                 bot.interrupt_code = false;
                 let stopping;
                 const stop = () => {
@@ -467,6 +517,7 @@ export function createActionRunner(
                 }
                 if (slotChanges && !controller.signal.aborted) await settleInventory(bot);
                 owner.active = false;
+                boundary.owner = null;
                 if (controller.signal.aborted) stop();
                 stopping ??= stopBody(bot);
                 let grace;
@@ -501,4 +552,5 @@ export function createActionRunner(
             }
         },
     };
+    return runner;
 }

@@ -1,9 +1,46 @@
 import { abortError, failWith, withFailureCode } from './failures.js';
 import { item } from './observation.js';
 import { SMELT_MS, requireFunction, settleInventory, untilAbort } from './runtime.js';
-import { choice, coords, count, name } from './schema.js';
+import { choice, coords, count, integer, name } from './schema.js';
 
 export function createCrafting(ctx) {
+    ctx.add(
+        'recipes',
+        'Read actual version-specific crafting recipes without crafting. count is desired output ITEMS. Returns ingredients and required totals for each alternative, plus table requirements and byproducts. Choose based on current inventory instead of guessing material arithmetic.',
+        { item: name, count: integer(1, 4096), after: integer(0, 100000) },
+        a => {
+            const { bot } = ctx,
+                entry = bot.registry.itemsByName[a.item];
+            if (!entry) throw new Error('Unknown item in this Minecraft registry');
+            const choices = bot.recipesAll(entry.id, null, true),
+                after = a.after ?? 0;
+            const describe = d => ({
+                id: d.id,
+                name: bot.registry.items[d.id]?.name ?? null,
+                count: Math.abs(d.count),
+                ...(d.metadata != null ? { metadata: d.metadata } : {}),
+            });
+            const recipes = choices.slice(after, after + 20).map(r => {
+                const repetitions = Math.ceil((a.count ?? 1) / r.result.count);
+                const ingredients = r.delta.filter(d => d.count < 0).map(describe);
+                return {
+                    output: describe(r.result),
+                    requiresTable: r.requiresTable,
+                    repetitions,
+                    ingredients,
+                    requiredTotals: ingredients.map(i => ({ ...i, count: i.count * repetitions })),
+                    byproducts: r.delta.filter(d => d.count > 0 && d.id !== entry.id).map(describe),
+                };
+            });
+            return {
+                item: a.item,
+                recipes,
+                nextAfter: after + recipes.length,
+                hasMore: after + recipes.length < choices.length,
+            };
+        },
+        { required: ['item'], idle: true },
+    );
     const {
         add,
         at,

@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { createSessionHistoryTool } from './session-history.js';
 import { failureCode } from '../tools/game-tools.js';
 import { findModel } from './extra-models.js';
+import { subscriptionProblem } from './auth.js';
 import { sanitizeImages, isImageRejection, redactPayloads } from './image-guard.js';
 
 export async function createMinecraftSession(options, dependencies = {}) {
@@ -24,11 +25,15 @@ export async function createPiSession(options, modules) {
         enableSkillCommands: false,
     });
     const modelRuntime = await sdk.ModelRuntime.create({
-        authPath: join(directory, 'auth.json'),
+        authPath: options.authPath ?? join(directory, 'auth.json'),
         modelsPath: options.modelsPath ?? null,
         allowModelNetwork: false,
     });
     const m = options.model ?? {};
+    if (options.subscriptionOnly) {
+        const problem = subscriptionProblem(modelRuntime, m, options.apiKey);
+        if (problem) throw new Error(problem);
+    }
     const model = m.baseUrl
         ? await registerCompatibleModel(modelRuntime, m, options, modules)
         : await resolveCatalogModel(modelRuntime, m, options);
@@ -226,7 +231,7 @@ function safeErrorMetadata(error) {
     return metadata;
 }
 const FATAL_MODEL_ERROR =
-    /\b(401|403)\b|invalid.{0,3}(x-)?api.{0,3}key|incorrect api key|authentication|unauthori[sz]ed|permission_denied|no api key|api key not|credit balance|insufficient_quota|billing|model_not_found|not_found_error|model.{0,40}(not found|does not exist)/i;
+    /\b(401|403)\b|invalid_grant|refresh_token_(reused|expired|invalidated)|invalid.{0,3}(x-)?api.{0,3}key|incorrect api key|authentication|unauthori[sz]ed|permission_denied|no api key|api key not|credit balance|insufficient_quota|billing|model_not_found|not_found_error|model.{0,40}(not found|does not exist)/i;
 
 export function interruptedTurn(entries, max = 1500) {
     const last = entries.filter(entry => entry.type === 'message').at(-1)?.message;
@@ -306,20 +311,6 @@ function abortable(promise, signal) {
     });
 }
 
-const IDLE_TOOLS = new Set([
-    'wait',
-    'read_dms',
-    'unread_dms',
-    'dm_counts',
-    'observe_world',
-    'look',
-    'look_around',
-    'session_history',
-    'directory',
-    'directory_search',
-    'inventory',
-]);
-
 class MinecraftSession {
     constructor(options, dependencies) {
         if (!/^[A-Za-z0-9_-]+$/.test(options.agentId ?? '')) throw new Error('Invalid agentId');
@@ -357,6 +348,8 @@ class MinecraftSession {
         this.closed = false;
         this.timer = null;
         this.nextWakeAt = null;
+        this.standby = false;
+        this.waitReason = null;
         this.failures = 0;
         this.active = null;
         this.work = null;
@@ -364,11 +357,15 @@ class MinecraftSession {
     }
 
     async invokeTool(name, args, signal) {
-        const tool = this.wrappedTools?.get(name);
-        if (!tool) throw new Error(`Unknown tool: ${String(name).slice(0, 60)}`);
+        const execute = this.toolExecutors?.get(name);
+        if (!execute) throw new Error(`Unknown tool: ${String(name).slice(0, 60)}`);
         if (name === 'session_history' || name === 'run_code' || name === 'run_tool')
             throw new Error(`Tool ${name} cannot be called from code.`);
-        const result = await tool.execute('code', args, signal);
+        if (this.options.shouldYield?.() && !execute.allowDuringYield?.(args))
+            throw new Error(
+                'Batch paused for new instructions. Keep partial progress and return to the model before continuing.',
+            );
+        const result = await execute(false, 'code', args, signal);
         const text = result?.content?.map(c => c.text ?? '').join('') ?? '';
         if (result?.isError) throw new Error(`${name}: ${text.slice(0, 2000)}`);
         if (result?.details && 'result' in result.details) return result.details.result;
@@ -381,6 +378,7 @@ class MinecraftSession {
 
     async init() {
         const names = new Set();
+        this.toolExecutors = new Map();
         if (this.options.tools?.some(tool => tool.name === 'session_history'))
             throw new Error('Reserved native tool name: session_history');
         const tools = [...(this.options.tools ?? []), createSessionHistoryTool(() => this.manager.getEntries())].map(
@@ -388,72 +386,88 @@ class MinecraftSession {
                 if (!tool.name || names.has(tool.name) || typeof tool.execute !== 'function')
                     throw new Error('Invalid or duplicate native tool');
                 names.add(tool.name);
+                const execute = async (modelFacing, ...args) => {
+                    const cycle = this.active;
+                    if (!cycle || cycle.stop || cycle.controller.signal.aborted) throw stopError();
+                    if (cycle.tools >= this.options.maxToolCalls) {
+                        this.stopCycle('budget');
+                        throw stopError();
+                    }
+                    cycle.tools++;
+                    cycle.inTool = (cycle.inTool ?? 0) + 1;
+                    cycle.didWork ||= tool.idle !== true;
+                    const start = this.clock.now();
+                    let success = false;
+                    let code = 'unknown';
+                    let signal, errorText, resultText;
+                    try {
+                        signal = args[2]
+                            ? AbortSignal.any([args[2], cycle.controller.signal])
+                            : cycle.controller.signal;
+                        let result =
+                            modelFacing && tool.body && this.options.shouldYield?.()
+                                ? {
+                                      isError: true,
+                                      details: { failureCode: 'cancellation' },
+                                      content: [
+                                          {
+                                              type: 'text',
+                                              text: 'Action paused for new instructions. Review them before acting.',
+                                          },
+                                      ],
+                                  }
+                                : await tool.execute(args[0], args[1], signal, args[3], args[4]);
+                        success = !signal.aborted && !result?.isError;
+                        resultText = textOf(result);
+                        if (!success) {
+                            code = failureCode(result, signal);
+                            errorText = result?.details?.error ?? result?.content?.find?.(c => c.type === 'text')?.text;
+                        }
+                        const note = modelFacing ? this.options.toolResultNote?.() : null;
+                        if (note)
+                            result = {
+                                ...(result ?? {}),
+                                content: [
+                                    ...(Array.isArray(result?.content) ? result.content : []),
+                                    { type: 'text', text: note },
+                                ],
+                            };
+                        return result;
+                    } catch (error) {
+                        code = failureCode(error, signal);
+                        errorText = error?.message ?? error;
+                        throw error;
+                    } finally {
+                        cycle.inTool--;
+                        metric(this.options.telemetry, {
+                            tool: tool.name,
+                            source: modelFacing ? 'model' : 'program',
+                            body: tool.body === true,
+                            cycleId: cycle.id,
+                            args: clip(args[1] ?? {}, 500),
+                            timeMs: this.clock.now() - start,
+                            success,
+                            ...(!success ? { failureCode: code } : {}),
+                            result: redactPayloads(compactResult(String(errorText ?? resultText ?? ''), 300)),
+                        });
+                        if (!success && !signal?.aborted)
+                            this.diagnose({
+                                event: 'tool_error',
+                                tool: tool.name,
+                                failureCode: code,
+                                errorMessage: redactPayloads(String(errorText ?? '').slice(0, 400)),
+                            });
+                    }
+                };
+                execute.allowDuringYield = tool.allowDuringYield;
+                this.toolExecutors.set(tool.name, execute);
                 return {
                     ...tool,
                     executionMode: 'sequential',
-                    execute: async (...args) => {
-                        const cycle = this.active;
-                        if (!cycle || cycle.stop || cycle.controller.signal.aborted) throw stopError();
-                        if (cycle.tools >= this.options.maxToolCalls) {
-                            this.stopCycle('budget');
-                            throw stopError();
-                        }
-                        cycle.tools++;
-                        cycle.inTool = (cycle.inTool ?? 0) + 1;
-                        (cycle.toolNames ??= []).push(tool.name);
-                        const start = this.clock.now();
-                        let success = false;
-                        let code = 'unknown';
-                        let signal, errorText, resultText;
-                        try {
-                            signal = args[2]
-                                ? AbortSignal.any([args[2], cycle.controller.signal])
-                                : cycle.controller.signal;
-                            let result = await tool.execute(args[0], args[1], signal, args[3], args[4]);
-                            success = !signal.aborted && !result?.isError;
-                            resultText = textOf(result);
-                            if (!success) {
-                                code = failureCode(result, signal);
-                                errorText =
-                                    result?.details?.error ?? result?.content?.find?.(c => c.type === 'text')?.text;
-                            }
-                            const note = this.options.toolResultNote?.();
-                            if (note)
-                                result = {
-                                    ...(result ?? {}),
-                                    content: [
-                                        ...(Array.isArray(result?.content) ? result.content : []),
-                                        { type: 'text', text: note },
-                                    ],
-                                };
-                            return result;
-                        } catch (error) {
-                            code = failureCode(error, signal);
-                            errorText = error?.message ?? error;
-                            throw error;
-                        } finally {
-                            cycle.inTool--;
-                            metric(this.options.telemetry, {
-                                tool: tool.name,
-                                args: clip(args[1] ?? {}, 500),
-                                timeMs: this.clock.now() - start,
-                                success,
-                                ...(!success ? { failureCode: code } : {}),
-                                result: redactPayloads(compactResult(String(errorText ?? resultText ?? ''), 300)),
-                            });
-                            if (!success && !signal?.aborted)
-                                this.diagnose({
-                                    event: 'tool_error',
-                                    tool: tool.name,
-                                    failureCode: code,
-                                    errorMessage: redactPayloads(String(errorText ?? '').slice(0, 400)),
-                                });
-                        }
-                    },
+                    execute: (...args) => execute(true, ...args),
                 };
             },
         );
-        this.wrappedTools = new Map(tools.map(tool => [tool.name, tool]));
         const result = await this.createSession({ ...this.options, tools });
         this.session = result.session;
         this.compatible = result.compatible !== false;
@@ -468,6 +482,8 @@ class MinecraftSession {
             .filter(entry => entry.type === 'custom' && entry.customType === STATE_TYPE)
             .at(-1)?.data;
         if (Number.isFinite(saved?.nextWakeAt)) this.nextWakeAt = saved.nextWakeAt;
+        this.standby = saved?.standby === true;
+        this.waitReason = typeof saved?.waitReason === 'string' ? saved.waitReason : null;
         const originalTransform = this.session.agent.transformContext?.bind(this.session.agent);
         this.session.agent.transformContext = async (messages, signal) => {
             const cycle = this.active;
@@ -525,6 +541,7 @@ class MinecraftSession {
                     retry: Boolean(cycle.imagesDisabled),
                     removed,
                 });
+            this.options.beforeRequest?.();
             return outgoing;
         };
         const originalPayload = this.session.agent.onPayload?.bind(this.session.agent);
@@ -535,8 +552,11 @@ class MinecraftSession {
             return this.options.cacheBreakpoint === false ? base : markCacheBreakpoint(base);
         };
         this.unsubscribe = this.session.subscribe(event => {
-            if (event.type === 'tool_execution_end' && this.active?.stop === 'wait') this.abortAgent();
+            if (event.type === 'tool_execution_end' && ['wait', 'standby'].includes(this.active?.stop))
+                this.abortAgent();
             if (event.type === 'message_end' && event.message?.role === 'assistant') {
+                if (this.active)
+                    metric(this.options.onResponse, !['error', 'aborted'].includes(event.message.stopReason));
                 const said = textOf(event.message).trim();
                 if (said) metric(this.options.onText, said);
             }
@@ -573,19 +593,33 @@ class MinecraftSession {
     }
 
     save() {
-        this.manager.appendCustomEntry(STATE_TYPE, { nextWakeAt: this.nextWakeAt });
+        this.manager.appendCustomEntry(STATE_TYPE, {
+            nextWakeAt: this.nextWakeAt,
+            standby: this.standby,
+            waitReason: this.waitReason,
+        });
     }
 
     start() {
         if (this.closed) throw new Error('Session closed');
         this.paused = false;
-        this.arm(this.nextWakeAt ?? this.clock.now());
+        if (!this.standby) this.arm(this.nextWakeAt ?? this.clock.now());
     }
 
-    enqueue(event, { key, urgent = false, interrupt = true, restart = false } = {}) {
+    enqueue(
+        event,
+        { key, urgent = false, interrupt = true, restart = false, wakeWhenIdle = false, passive = false } = {},
+    ) {
         if (this.closed) return false;
-        this.queue.set(key ?? `event:${++this.sequence}`, event);
-        if (this.idleStreak) {
+        passive = passive && !urgent && !wakeWhenIdle;
+        const leaveStandby = this.standby && !passive;
+        if (leaveStandby) {
+            this.standby = false;
+            urgent = true;
+            wakeWhenIdle = true;
+        }
+        this.queue.set(key ?? `event:${++this.sequence}`, { event, passive });
+        if (!passive && this.idleStreak) {
             this.idleStreak = 0;
             if (!this.active && Number.isFinite(this.idleWaitUntil) && this.nextWakeAt > this.idleWaitUntil) {
                 this.nextWakeAt = Math.max(this.clock.now(), this.idleWaitUntil);
@@ -594,7 +628,15 @@ class MinecraftSession {
             }
         }
         while (this.queue.size > this.options.maxQueue) this.queue.delete(this.queue.keys().next().value);
-        if (!this.paused && urgent && (!this.options.continuous || key === 'damage' || key === 'hit')) {
+        if (
+            !this.paused &&
+            urgent &&
+            (leaveStandby ||
+                !this.options.continuous ||
+                key === 'damage' ||
+                key === 'hit' ||
+                (wakeWhenIdle && !this.active))
+        ) {
             this.nextWakeAt = this.clock.now();
             this.save();
             if (this.active) {
@@ -616,9 +658,10 @@ class MinecraftSession {
         return true;
     }
 
-    requestWait(untilMs) {
+    requestWait(untilMs, reason = null) {
         if (!Number.isFinite(untilMs)) throw new Error('Wait requires finite epoch milliseconds');
         if (!this.active) throw new Error('Wait requires active cycle');
+        this.waitReason = reason;
         this.nextWakeAt = Math.min(
             Math.max(untilMs, this.clock.now() + this.options.minWakeMs),
             this.active.wakeAt ?? Infinity,
@@ -628,10 +671,23 @@ class MinecraftSession {
         return this.nextWakeAt;
     }
 
+    requestStandby() {
+        if (!this.active) throw new Error('Standby requires an active cycle');
+        if (this.active.wakeAt != null || [...this.queue.values()].some(entry => !entry.passive)) {
+            this.requestWait(this.clock.now() + this.options.minWakeMs);
+            return { standby: false, reason: 'New instructions are pending; review them first.' };
+        }
+        this.standby = true;
+        this.nextWakeAt = null;
+        this.active.stop = 'standby';
+        this.save();
+        return { standby: true, wakeOn: 'instructions, messages needing action, or danger' };
+    }
+
     arm(at) {
         if (this.timer !== null) this.clock.clearTimeout(this.timer);
         this.timer = null;
-        if (this.paused || this.closed || this.active) return;
+        if (this.paused || this.closed || this.active || this.standby || !Number.isFinite(at)) return;
         const delay = Math.min(2147483647, Math.max(0, at - this.clock.now()));
         this.timer = this.clock.setTimeout(() => {
             this.timer = null;
@@ -666,9 +722,12 @@ class MinecraftSession {
 
     async runCycle() {
         if (this.active || this.paused || this.closed) return;
+        const queued = [...this.queue.values()];
         const cycle = {
+            id: ++this.sequence,
             controller: new AbortController(),
-            events: [...this.queue.values()],
+            events: queued.map(entry => entry.event),
+            hasWakeEvents: queued.some(entry => !entry.passive),
             steps: 0,
             tools: 0,
             stop: null,
@@ -679,6 +738,7 @@ class MinecraftSession {
         };
         this.queue.clear();
         this.active = cycle;
+        this.waitReason = null;
         this.nextWakeAt = null;
         const deadline = this.clock.setTimeout(() => this.stopCycle('budget'), this.options.maxWallMs);
         const resume = this.resume;
@@ -753,6 +813,8 @@ class MinecraftSession {
                         this.options.minWakeMs,
                         Math.min(this.options.maxBackoffMs, this.options.idleMs * 2 ** Math.min(this.failures - 1, 20)),
                     );
+            } else if (this.standby) {
+                this.nextWakeAt = null;
             } else if (cycle.stop === 'budget') {
                 this.failures = 0;
                 this.nextWakeAt = this.clock.now() + this.options.minWakeMs;
@@ -763,11 +825,7 @@ class MinecraftSession {
                     : this.clock.now() + Math.max(this.options.idleMs, this.options.minWakeMs);
             }
             const idleOnly =
-                cycle.stop === 'wait' &&
-                !cycle.failed &&
-                !cycle.events.length &&
-                (cycle.toolNames ?? []).includes('wait') &&
-                cycle.toolNames.every(n => IDLE_TOOLS.has(n));
+                cycle.stop === 'wait' && !cycle.failed && !cycle.hasWakeEvents && cycle.tools > 0 && !cycle.didWork;
             if (idleOnly && this.options.idleBackoffMaxMs > 0 && Number.isFinite(this.nextWakeAt)) {
                 this.idleStreak = (this.idleStreak ?? 0) + 1;
                 const now = this.clock.now();
@@ -787,6 +845,7 @@ class MinecraftSession {
                 this.idleStreak = 0;
                 this.idleWaitUntil = null;
             }
+            metric(this.options.onCycleEnd, { failed: cycle.failed, stop: cycle.stop });
             try {
                 this.save();
             } catch {
@@ -839,6 +898,8 @@ class MinecraftSession {
 
     async cancel() {
         this.paused = true;
+        this.standby = false;
+        this.waitReason = null;
         if (this.timer !== null) this.clock.clearTimeout(this.timer);
         this.timer = null;
         this.queue.clear();
@@ -847,9 +908,14 @@ class MinecraftSession {
         await this.idle();
     }
 
-    async close() {
+    async close({ preserveSchedule = false } = {}) {
+        const schedule = { nextWakeAt: this.nextWakeAt, standby: this.standby, waitReason: this.waitReason };
         this.closed = true;
         await this.cancel();
+        if (preserveSchedule) {
+            Object.assign(this, schedule);
+            this.save();
+        }
         this.unsubscribe?.();
         this.session.dispose();
     }

@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { ASSETS, cap, startPoller, waitHealthy } from './shell-sandbox.js';
+import { cap, installRelayFiles, startPoller, waitHealthy } from './shell-sandbox.js';
 
 export const DOCKER_IMAGE = 'node:22-bookworm';
 const HOME = '/home/agent';
@@ -81,7 +81,19 @@ export function createDockerBackend({
         return r.stdout.trim() === 'true' ? 'running' : 'stopped';
     };
     const ensureContainer = async log => {
-        const s = await state();
+        let s = await state();
+        if (s !== 'missing') {
+            const mounts = JSON.parse(await docker(['inspect', '-f', '{{json .Mounts}}', name]));
+            const source = destination => mounts.find(m => m.Destination === destination)?.Source;
+            if (
+                source(HOME) !== path.resolve(workdir) ||
+                source(SHARED) !== (sharedDir ? path.resolve(sharedDir) : undefined)
+            ) {
+                log?.(`recreating ${name} to apply workspace mounts; persistent files are retained`);
+                await docker(['rm', '-f', name]);
+                s = 'missing';
+            }
+        }
         if (s === 'running') return;
         if (s === 'stopped') {
             await docker(['start', name], { timeoutMs: 60000 });
@@ -139,16 +151,8 @@ export function createDockerBackend({
         name,
         async start({ invoke, tools, log }) {
             token = crypto.randomBytes(16).toString('hex');
-            const opt = path.join(workdir, '.harness');
-            await fs.mkdir(path.join(workdir, 'bin'), { recursive: true });
-            await fs.mkdir(opt, { recursive: true });
-            await fs.copyFile(path.join(ASSETS, 'relay.cjs'), path.join(opt, 'relay.cjs'));
-            await fs.writeFile(path.join(opt, 'tools.json'), JSON.stringify(tools));
-            const toolCli = (await fs.readFile(path.join(ASSETS, 'tool'), 'utf8')).replaceAll(
-                '/opt/harness/tools.json',
-                `${HOME}/.harness/tools.json`,
-            );
-            await fs.writeFile(path.join(workdir, 'bin', 'tool'), toolCli, { mode: 0o755 });
+            if (sharedDir) await fs.mkdir(path.join(sharedDir, 'tools'), { recursive: true });
+            await installRelayFiles(workdir, tools, `${HOME}/.harness/tools.json`);
             await ensureContainer(log);
             await startRelay();
             stopPoll = startPoller({ relayUrl, token, invoke, log, onDead: startRelay });
@@ -156,6 +160,7 @@ export function createDockerBackend({
         env() {
             return {
                 HOME,
+                PYTHONPATH: `${HOME}/.harness`,
                 PATH: `${HOME}/bin:${sharedDir ? `${SHARED}/tools:` : ''}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
                 TOOL_API_TOKEN: token,
                 TOOL_RELAY_URL: `http://127.0.0.1:${RELAY_PORT}`,

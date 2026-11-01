@@ -1,0 +1,15 @@
+services:
+  server:
+    environment:
+      LEVEL_TYPE: minecraft:flat
+      GENERATOR_SETTINGS: '{"layers":[{"block":"minecraft:air","height":1}],"biome":"minecraft:the_void"}'
+      GENERATE_STRUCTURES: 'FALSE'
+    volumes:
+      - ${BENCH_SERVER_DIR}:/data
+  agent:
+    environment:
+      AGENT_NAME: Luna
+      AGENT_MODEL: ${BENCH_MODEL:-openai/gpt-6-luna}
+      AGENT_THINKING: ${BENCH_THINKING:-medium}
+      AGENT_STATE_DIR: ${BENCH_AGENT_STATE_DIR}
+      AGENT_MODEL_AUTH_FILE: ${LOCAL_STATE_DIR}/auth.json

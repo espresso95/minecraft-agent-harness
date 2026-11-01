@@ -75,6 +75,14 @@ test('native schemas are typed, closed, unique and do not expose commands/paths/
     }
 });
 
+test('idle status metadata is owned by the actual tools; work remains conservative by default', () => {
+    const { tools } = setup({ mailbox: {}, peers: [] });
+    for (const name of ['message_status', 'read_chat', 'read_dms', 'inventory', 'observe_world', 'look'])
+        assert.equal(tools.find(t => t.name === name).idle, true, name);
+    for (const name of ['post_chat', 'send_dm', 'gather', 'go_to', 'place_line'])
+        assert.equal(tools.find(t => t.name === name).idle, false, name);
+});
+
 test('disabled-only compatibility refuses a real modes manager and bounds logs', () => {
     const b = bot();
     installSkillCompatibility(b);
@@ -355,7 +363,7 @@ test('mailbox fixed actor, registered-recipient restriction, paging and public s
         },
     });
     assert.equal((await run('send_dm', { to: 'Peer', text: 'private' })).details.id, 42);
-    assert.deepEqual(sent, [['Peer', 'private']]);
+    assert.deepEqual(sent, [['Peer', 'private', {}]]);
     assert.equal((await run('send_dm', { to: 'Human', text: 'hi' })).isError, true);
     assert.equal((await run('send_dm', { to: 'Peer', text: 'hi', actor: 'Peer' })).isError, true);
     assert.deepEqual((await run('read_chat')).details, [-2, 20]);
@@ -505,6 +513,37 @@ test('gather walks to a block it can see, skips failing ones (remembered across 
     assert.equal(again.isError, true);
     assert.equal(failureCode(again), 'not_found');
     assert.deepEqual(dug, [2]);
+});
+
+test('gather yields between blocks with truthful partial counts and collected inventory', async () => {
+    const { createRequire } = await import('node:module');
+    const b = bot();
+    b.username = 'CheckpointBot';
+    let mined = 0;
+    b.registry = createRequire(import.meta.url)('minecraft-data')('1.21.6');
+    b.entity.position = new Vec3(0, 64, 0);
+    const block = { name: 'oak_log', position: new Vec3(1, 64, 0), diggable: true, canHarvest: () => true };
+    b.blockAt = () => block;
+    b.inventory.items = () => (mined ? [{ name: 'oak_log', count: mined }] : []);
+    b.dig = async () => {
+        mined++;
+    };
+    const { run } = setup({
+        bot: b,
+        world: { getNearestBlocks: () => [block] },
+        perception: { isBlockVisible: () => true },
+        shouldYield: () => mined > 0,
+    });
+    const output = await run('gather', { block: 'oak_log', count: 10 });
+    assert.equal(output.isError, undefined);
+    assert.equal(output.details.result.yielded, true);
+    assert.equal(output.details.result.mined, 1);
+    assert.equal(output.details.result.requested, 10);
+    assert.deepEqual(output.details.result.inventoryDelta, { oak_log: 1 });
+    const again = await run('gather', { block: 'oak_log', count: 9 });
+    assert.equal(again.details.result.yielded, true);
+    assert.equal(again.details.result.mined, 0);
+    assert.equal(mined, 1);
 });
 
 test('gather with nothing around reports not_found and the nearest far block', async () => {
@@ -910,7 +949,35 @@ test('send_dm canonicalizes peer casing to registered roster name', async () => 
     });
     const response = await run('send_dm', { to: 'peer', text: 'hello' });
     assert.equal(response.details.recipient, 'Peer');
-    assert.deepEqual(calls, [['Peer', 'hello']]);
+    assert.deepEqual(calls, [['Peer', 'hello', {}]]);
+});
+
+test('private coordination uses the mailbox for offline teammates and whispers only to humans', async () => {
+    const b = bot();
+    const privateMessages = [];
+    b.players = { Human: {} };
+    b.whisper = (to, text) => b.calls.push(['whisper', to, text]);
+    const tools = createGameTools({
+        bot: b,
+        peers: ['Peer'],
+        whisperPlayers: true,
+        mailbox: {
+            sendDM: (to, text) => {
+                privateMessages.push({ to, text });
+                return privateMessages.length;
+            },
+        },
+        observe: async () => ({ state: {} }),
+    });
+    const send = tools.find(t => t.name === 'send_dm');
+    assert.equal((await send.execute('test', { to: 'peer', text: 'Collect 16 logs' })).isError, undefined);
+    assert.equal(b.calls.length, 0);
+    assert.equal((await send.execute('test', { to: 'human', text: 'On my way' })).isError, undefined);
+    assert.deepEqual(b.calls, [['whisper', 'Human', 'On my way']]);
+    assert.deepEqual(
+        privateMessages.map(m => m.to),
+        ['Peer', 'Human'],
+    );
 });
 
 test('actual native inventory server held-slot echo is allowed once, only in its synchronous authoritative event', async () => {

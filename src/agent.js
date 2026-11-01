@@ -1,7 +1,7 @@
 import { installRespawn } from './body/respawn.js';
 import { once } from 'node:events';
 import { installOxygenIsolation } from './body/oxygen.js';
-import { installDamageTypes, causeLabel, formatHitAlert } from './body/hurt-cause.js';
+import { installDamageTypes, causeLabel, formatHitAlert, attackDamageStop } from './body/hurt-cause.js';
 import { installDifficulty, currentDifficulty } from './body/difficulty.js';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
@@ -13,10 +13,13 @@ import * as perception from './skills/perception.js';
 import * as world from './skills/world.js';
 import { guardPlayerChat } from './body/chat-guard.js';
 import { MailboxStore } from './comms/mailbox-store.js';
+import { AgentInbox } from './comms/inbox.js';
+import { installAgentControl } from './controller/agent-control.js';
 import { renderPlan } from './comms/plan.js';
 import {
     createGameTools,
     createObservation,
+    serializeObservation,
     createActionRunner,
     installSkillCompatibility,
     KEEP_MOVING_TOOLS,
@@ -25,6 +28,7 @@ import {
 import { createWorkspaceTools } from './tools/workspace-tools.js';
 import { createDirectoryTools } from './tools/directory-tools.js';
 import { createShellTools } from './tools/shell-tools.js';
+import { createSkillTools } from './tools/skill-tools.js';
 import { loadToolsModule } from './tools/extra-tools.js';
 import { createSharedExecTool } from './tools/shared-exec.js';
 import { createE2bBackend, createLocalBackend } from './sandbox/shell-sandbox.js';
@@ -32,7 +36,7 @@ import { createDockerBackend } from './sandbox/docker.js';
 import { createMinecraftSession } from './model/session.js';
 import { paceBot } from './body/tickpace.js';
 import { installDamageWake } from './body/damage.js';
-import { buildSystemPrompt } from './prompt.js';
+import { buildSystemPrompt, difficultyRules } from './prompt.js';
 import { setSettings } from './skills/settings.js';
 import { validateAgentConfig, safeError, runtimeStatus, isRefusedLateMutation } from './lifecycle.js';
 import { EXIT, kickText, isFatalKick, connectionMessage, activityLine } from './startup.js';
@@ -83,6 +87,7 @@ export async function startAgent(settings, options = {}) {
     let runner,
         camera,
         mailbox,
+        inbox,
         closing = false,
         status = 'starting';
     const timers = [],
@@ -123,6 +128,13 @@ export async function startAgent(settings, options = {}) {
     const actionRunner = createActionRunner(bot, {
         settleTimeoutMs: 8000,
         onFatal: () => void finish('unsafe_action'),
+        onBackgroundError: (action, error) => {
+            record('background_action_failed', { action, message: String(error.message).slice(0, 500) });
+            runner?.enqueue(
+                { source: 'body', kind: 'action_failed', text: `${action}: ${error.message}` },
+                { key: 'background_action_failed', urgent: true, wakeWhenIdle: true },
+            );
+        },
     });
     function checkpoint() {
         atom(path.join(root, 'status.json'), {
@@ -138,12 +150,16 @@ export async function startAgent(settings, options = {}) {
         status = reason;
         if (retired) atom(path.join(root, 'retired.json'), { at: new Date().toISOString(), reason });
         record('stopping', { reason, ...(message ? { message: String(message).slice(0, 500) } : {}) });
+        process.send?.(
+            { type: 'companion_stopping', reason, message: message ? String(message).slice(0, 500) : null },
+            () => {},
+        );
         options.onStop?.(reason, message);
         timers.forEach(clearTimeout);
         const hardStop = setTimeout(() => process.exit(0), 10000);
         try {
             await actionRunner.stop();
-            await runner?.close();
+            await runner?.close({ preserveSchedule: EXIT_FOR[reason] === EXIT.reconnect });
             await camera?.close();
             pacer.close();
             for (const t of shellTools) await t.close?.();
@@ -152,6 +168,10 @@ export async function startAgent(settings, options = {}) {
         }
         try {
             checkpoint();
+            if (!process.send)
+                mailbox?.recoverTasks(
+                    'The worker stopped. Verify the saved checkpoint and world before resuming this work.',
+                );
             mailbox?.close();
             bot.quit('Agent stopped');
         } finally {
@@ -165,30 +185,22 @@ export async function startAgent(settings, options = {}) {
         const bounded = text.slice(0, 2000);
         if (kind === 'chat') mailbox?.receiveChat(source, bounded);
         if (kind === 'direct') {
-            const id = mailbox?.receiveDM(source, bounded);
-            if (id) seenDmId = Math.max(seenDmId, id);
-            notifyMessage(source, bounded);
+            mailbox?.receiveDM(source, bounded, {
+                urgent: !peers.some(p => p.toLowerCase() === String(source).toLowerCase()),
+            });
+            inbox?.notify();
+            return;
         }
-        runner?.enqueue({ source, kind, text: bounded }, { key: `${kind}:${source}`, urgent: kind === 'direct' });
-    };
-    let seenDmId = 0;
-    const pendingMessages = [];
-    const lastInterruptBy = new Map();
-    const notifyMessage = (from, text) => {
-        pendingMessages.push({ from, text: text.length > 200 ? `${text.slice(0, 200)}...` : text });
-        if (pendingMessages.length > 10) pendingMessages.shift();
-        record('message_received', { from, chars: text.length });
-        const active = actionRunner.status.active;
-        const now = Date.now();
-        if (active && now - (lastInterruptBy.get(from) ?? 0) > 15000) {
-            lastInterruptBy.set(from, now);
-            actionRunner.interrupt(`Interrupted: private message from ${from}`);
-        }
-    };
-    const messageAlert = () => {
-        if (!pendingMessages.length) return null;
-        const lines = pendingMessages.splice(0).map(m => `${m.from}: "${m.text}"`);
-        return `NEW PRIVATE MESSAGE${lines.length > 1 ? 'S' : ''} (also in read_dms): ${lines.join(' | ')}. The sender is waiting for an answer: reply now with send_dm${team ? '' : ' (players receive it as a whisper)'}, then carry on with your work.`;
+        const wake = kind === 'direct' || !peers.some(p => p.toLowerCase() === String(source).toLowerCase());
+        runner?.enqueue(
+            { source, kind, text: bounded },
+            {
+                key: `${kind}:${source}`,
+                urgent: wake,
+                wakeWhenIdle: wake,
+                passive: !wake,
+            },
+        );
     };
     process.once('SIGINT', () => void finish('operator_stop'));
     process.once('SIGTERM', () => void finish('operator_stop'));
@@ -204,7 +216,7 @@ export async function startAgent(settings, options = {}) {
         record('unhandled_error', safeError(error));
         void finish('unhandled_error');
     });
-    const respawn = options.respawn !== false;
+    let respawn = options.respawn !== false;
     let deathInfo = null,
         lastDeathMsg = '';
     bot.on('messagestr', m => {
@@ -235,24 +247,23 @@ export async function startAgent(settings, options = {}) {
         }
         return line;
     };
-    if (respawn)
-        installRespawn(bot, {
-            allowed: () => !closing && Date.now() < c.deadline,
-            stopBody: () => actionRunner.stop(),
-            pauseSession: () => runner?.cancel(),
-            resumeSession: () => {
-                void appendDeathLog().then(line => {
-                    runner?.start();
-                    runner?.enqueue(
-                        { kind: 'respawn', text: `You ${line.replace(/^- [^ ]+: /, '')}` },
-                        { key: 'respawn', urgent: true },
-                    );
-                });
-            },
-            record: event => record(event),
-            finish: reason => void finish(reason),
-        });
-    else bot.on('death', () => void finish('death', { retired: true }));
+    installRespawn(bot, {
+        allowed: () => !closing && Date.now() < c.deadline,
+        respawnAllowed: () => respawn && !bot.game?.hardcore,
+        stopBody: () => actionRunner.stop(),
+        pauseSession: () => runner?.cancel(),
+        resumeSession: () => {
+            void appendDeathLog().then(line => {
+                if (!closing && status !== 'paused') runner?.start();
+                runner?.enqueue(
+                    { kind: 'respawn', text: `You ${line.replace(/^- [^ ]+: /, '')}` },
+                    { key: 'respawn', urgent: true },
+                );
+            });
+        },
+        record: event => record(event),
+        finish: reason => void finish(reason, { retired: reason === 'death' && (!respawn || bot.game?.hardcore) }),
+    });
     let spawned = false,
         connectionError = null;
     const reconnecting = Number(options.attempt ?? 0) > 0;
@@ -306,24 +317,20 @@ export async function startAgent(settings, options = {}) {
             );
         installSkillCompatibility(bot);
         record('spawn', { position: bot.entity.position, gameMode: bot.game.gameMode });
-        mailbox = new MailboxStore(c.mailboxPath, name);
-        if (!team) {
+        mailbox = new MailboxStore(c.mailboxPath, name, {
+            onCommit: () => process.send?.({ type: 'mailbox_committed' }, () => {}),
+        });
+        inbox = new AgentInbox({ store: mailbox, peers, getRunner: () => runner, actions: actionRunner, record });
+        if (!team || profile.playerChat !== false) {
             bot.on('chat', (from, text) => receive(from, text));
             bot.on('whisper', (from, text) => receive(from, text, 'direct'));
-        } else
+        }
+        if (team && typeof process.send !== 'function')
             timers.push(
                 setInterval(() => {
-                    if (closing || !mailbox) return;
+                    if (closing) return;
                     try {
-                        for (const m of mailbox.unreadPreview(20, 200))
-                            if (m.id > seenDmId) {
-                                seenDmId = m.id;
-                                notifyMessage(m.sender, m.text);
-                                runner?.enqueue(
-                                    { source: m.sender, kind: 'direct', text: m.text },
-                                    { key: `direct:${m.sender}`, urgent: true },
-                                );
-                            }
+                        inbox.notify();
                     } catch (error) {
                         record('mailbox_poll_error', { message: String(error?.message ?? error).slice(0, 200) });
                     }
@@ -384,8 +391,8 @@ export async function startAgent(settings, options = {}) {
                 );
             const act = String(actionRunner.status.active ?? '');
             if (act === 'attack') {
-                if (!source && cause !== 'starve') bot.pi_attackStop = 'environment_damage';
-                else if (source.id !== bot.pi_attackTargetId) bot.pi_attackStop = `hit_by_other: ${who}`;
+                const reason = attackDamageStop(source, cause, bot.pi_attackTargetId, who);
+                if (reason) bot.pi_attackStop = reason;
             } else if (interruptsOnHit(act, Boolean(source)))
                 actionRunner.interrupt(`Interrupted: you were hit by ${who}`);
             bot.emit('pi_hit', {
@@ -445,6 +452,7 @@ export async function startAgent(settings, options = {}) {
             world,
             captureFrame: withImages ? captureFrame : undefined,
             mailbox,
+            actionRunner,
         });
         let hitInfoAt = -Infinity;
         const hitAlert = () => {
@@ -454,12 +462,20 @@ export async function startAgent(settings, options = {}) {
             for (const ev of unseen) ev.shown = true;
             return formatHitAlert(unseen, bot.health);
         };
-        const alerts = () => [hitAlert(), messageAlert()].filter(Boolean).join('\n') || null;
+        const alerts = () => [hitAlert(), inbox.note()].filter(Boolean).join('\n') || null;
         const observe = async options => {
             const current = await observeWorld(options);
             const alert = hitAlert();
-            const state = { ...(alert ? { alert } : {}), ...current.state };
-            if (team) {
+            const state = {
+                ...(alert ? { alert } : {}),
+                ...current.state,
+                rules: {
+                    difficulty: currentDifficulty(bot),
+                    survival: difficultyRules(currentDifficulty(bot)),
+                    permanentDeath: !respawn || Boolean(bot.game?.hardcore),
+                },
+            };
+            if (team && profile.playerChat === false) {
                 delete state.recentPublicChat;
                 if (typeof state.messaging === 'string') state.messaging = state.messaging.split(';')[0] + '.';
             }
@@ -478,8 +494,10 @@ export async function startAgent(settings, options = {}) {
         const extraTools = options.toolsModule
             ? await loadToolsModule(options.toolsModule, { bot, name, team, options: options.toolOptions ?? {} })
             : [];
+        const shouldYield = () => inbox.shouldYield();
         const gameTools = createGameTools({
             extraTools,
+            shouldYield,
             bot,
             mailbox,
             skills: { ...skills, ...survival },
@@ -490,46 +508,41 @@ export async function startAgent(settings, options = {}) {
             plan: team ? undefined : plan,
             peers,
             perStepFrames: withImages,
-            whisperPlayers: !team,
-        }).filter(t => !team || !['post_chat', 'read_chat'].includes(t.name));
-        let workspaceTools = await createWorkspaceTools({
-            privateRoot: path.join(root, 'workspace'),
-            sharedRoot: team ? path.join(root, 'workspace-unshared') : c.sharedRoot,
-            onWait: until => runner.requestWait(until),
-        });
-        if (team)
-            workspaceTools = workspaceTools.map(t => {
-                if (!t.parameters?.properties?.scope) return t;
-                const parameters = {
-                    ...t.parameters,
-                    properties: { ...t.parameters.properties, scope: { type: 'string', enum: ['private'] } },
-                };
-                return {
-                    ...t,
-                    parameters,
-                    description: t.description
-                        .replace('your private or explicitly shared workspace', 'your private workspace')
-                        .replace(/ or (the )?explicitly shared (artifacts|workspace)/, ''),
-                    execute: (id, args, signal) =>
-                        args?.scope === 'private'
-                            ? t.execute(id, args, signal)
-                            : Promise.reject(
-                                  new Error('Only scope private exists; use shared_exec for the shared machine.'),
-                              ),
-                };
-            });
-        if (team)
-            for (const t of gameTools)
-                if (t.name === 'message_status') {
-                    const run = t.execute;
-                    t.description = 'Your unread DM counts; does not mark read.';
-                    t.execute = async (...args) => {
-                        const r = await run(...args);
-                        const c = r?.content?.[0];
-                        if (c?.type === 'text') c.text = c.text.replace(/; public chat: \d+ \(mentions: \d+\)/, '');
-                        return r;
+            whisperPlayers: !team || profile.playerChat !== false,
+        }).filter(t => !team || profile.playerChat !== false || !['post_chat', 'read_chat'].includes(t.name));
+        const workspaceRoots = {
+            private: path.join(root, 'workspace', 'shell-home'),
+            shared: path.join(c.sharedRoot, 'workspace'),
+        };
+        const workspaceTools = await createWorkspaceTools({
+            privateRoot: workspaceRoots.private,
+            sharedRoot: workspaceRoots.shared,
+            onWait: (until, reason) => {
+                const work = mailbox.work();
+                if (
+                    work.readyCount &&
+                    !reason &&
+                    !work.current.some(t => t.state !== 'blocked') &&
+                    !actionRunner.status.active
+                )
+                    return {
+                        requestedIdleUntil: null,
+                        reason: 'Shared work is ready. Claim suitable work, record a blocker, or give a concrete waiting reason.',
+                        work,
                     };
-                }
+                return runner.requestWait(until, reason);
+            },
+            onStandby: () => {
+                const unfinishedTaskIds = mailbox.unfinishedTasks();
+                if (unfinishedTaskIds.length || mailbox.work().readyCount)
+                    return {
+                        standby: false,
+                        unfinishedTaskIds,
+                        reason: 'Finish or cancel your assigned tasks before standby. Use wait for periodic reviews.',
+                    };
+                return runner.requestStandby();
+            },
+        });
         const tools = [...gameTools, ...workspaceTools];
         if (team) tools.push(...createDirectoryTools({ bot, peers, self: name }));
         if (team && options.sharedMachineSocket)
@@ -551,7 +564,7 @@ export async function startAgent(settings, options = {}) {
                           template: sandbox.template || undefined,
                           agentName: name,
                           cohort: options.cohort,
-                          sharedDir: c.sharedRoot,
+                          sharedDir: workspaceRoots.shared,
                           privateDir: path.join(root, 'workspace', 'shell-bin'),
                           statePath: path.join(root, 'e2b-sandbox.json'),
                           sandboxTimeoutMs: 3 * 3600000,
@@ -559,24 +572,35 @@ export async function startAgent(settings, options = {}) {
                     : sandbox.kind === 'docker'
                       ? createDockerBackend({
                             agentName: name,
-                            workdir: path.join(root, 'workspace', 'shell-home'),
-                            sharedDir: c.sharedRoot,
+                            workdir: workspaceRoots.private,
+                            sharedDir: workspaceRoots.shared,
                             image: sandbox.image || undefined,
                             memory: sandbox.memory || undefined,
                             cpus: sandbox.cpus || undefined,
                         })
                       : createLocalBackend({
-                            workdir: path.join(root, 'workspace', 'shell-home'),
-                            sharedDir: c.sharedRoot,
+                            workdir: workspaceRoots.private,
+                            sharedDir: workspaceRoots.shared,
                         });
             shellTools = createShellTools({
                 backend,
                 invoke: (n, a) => runner.invokeTool(n, a),
+                stopActions: () => actionRunner.stop(),
                 toolList: () => tools,
                 log: m => record('shell_log', { message: String(m).slice(0, 500) }),
             });
             tools.push(...shellTools);
             runShell = shellTools.find(t => t.name === 'run_shell') ?? null;
+            tools.push(
+                ...createSkillTools({
+                    store: mailbox.skills,
+                    toolList: () => tools,
+                    workspaceRead: workspaceTools.find(t => t.name === 'workspace_read'),
+                    runShell,
+                    bot,
+                    perception,
+                }),
+            );
             if (runShell)
                 void runShell
                     .execute('memory', {
@@ -602,13 +626,11 @@ export async function startAgent(settings, options = {}) {
             name,
             objective: profile.objective,
             gameMode: wantMode,
-            difficulty: currentDifficulty(bot),
             team,
             personality: profile.personality,
             soul: profile.soul,
             tickRate,
             vision: withImages,
-            respawn,
             sandbox: Boolean(runShell),
             sharedMachine: tools.some(t => t.name === 'shared_exec'),
             sharedPath: options.sharedMachinePath ?? '/shared',
@@ -620,10 +642,11 @@ export async function startAgent(settings, options = {}) {
             sessionDir: path.join(root, 'pi-sessions'),
             systemPrompt: prompt,
             apiKey,
+            authPath: options.authPath,
+            subscriptionOnly: options.subscriptionOnly,
             model,
             modelsPath: options.modelsPath,
             thinkingLevel: options.thinkingLevel,
-            resumeThinkingLevel: 'minimal',
             reconnected: reconnecting,
             tools,
             maxModelCalls: Number.MAX_SAFE_INTEGER,
@@ -631,6 +654,10 @@ export async function startAgent(settings, options = {}) {
             continuous: true,
             turnHeadline: alerts,
             toolResultNote: alerts,
+            beforeRequest: () => inbox.beginRequest(),
+            shouldYield,
+            onResponse: success => inbox.finishRequest(success),
+            onCycleEnd: cycle => inbox.endCycle(cycle),
             hitInfoAt: () => hitInfoAt,
             hitRestartMs: 2000,
             observe: async ({ signal }) => {
@@ -644,7 +671,7 @@ export async function startAgent(settings, options = {}) {
                     image: withImages,
                 });
                 return {
-                    text: JSON.stringify({ ...current.state }),
+                    text: serializeObservation(current.state),
                     images: withImages
                         ? [{ type: 'image', data: current.frame.data, mimeType: current.frame.mimeType }]
                         : [],
@@ -675,7 +702,8 @@ export async function startAgent(settings, options = {}) {
             }, 3000),
         );
         options.onSession?.(runner.sessionInfo ?? {});
-        status = 'running';
+        inbox.notify();
+        status = options.startPaused ? 'paused' : 'running';
         checkpoint();
         record('ready', { tools: tools.map(t => t.name), nextWakeAt: runner.nextWakeAt });
         const at = bot.entity?.position;
@@ -683,7 +711,35 @@ export async function startAgent(settings, options = {}) {
             tools: tools.map(t => t.name),
             position: at ? `${Math.round(at.x)},${Math.round(at.y)},${Math.round(at.z)}` : null,
         });
-        runner.start();
+        if (process.send) {
+            installAgentControl({
+                runner,
+                actionRunner,
+                onMailbox: () => inbox.notify(),
+                configure: value => {
+                    if (
+                        !value ||
+                        !Array.isArray(value.peers) ||
+                        value.peers.some(n => typeof n !== 'string' || !/^[A-Za-z0-9_]{1,16}$/.test(n) || n === name) ||
+                        typeof value.permanentDeath !== 'boolean'
+                    )
+                        throw new Error('Invalid companion configuration');
+                    peers.splice(0, peers.length, ...new Set(value.peers));
+                    respawn = !value.permanentDeath;
+                    checkpoint();
+                    return { peers: [...peers], permanentDeath: !respawn };
+                },
+                record,
+                setStatus: value => {
+                    status = value;
+                    checkpoint();
+                },
+                stop: () => finish('owner_stop'),
+            });
+            process.once('disconnect', () => void finish('controller_disconnected'));
+            process.send({ type: 'companion_ready', paused: Boolean(options.startPaused) });
+        }
+        if (!options.startPaused) runner.start();
     } catch (error) {
         record('startup_error', { ...safeError(error), message: String(error?.message ?? error).slice(0, 500) });
         await finish('startup_error', { message: String(error?.message ?? error) });

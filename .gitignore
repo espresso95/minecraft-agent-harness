@@ -5,8 +5,12 @@ node_modules/
 .agent-state/
 *.log
 .DS_Store
-server/
-server-*/
+/server/
+/server-*/
 server.properties
 *.pem
 *.key
+
+.playwright-cli/
+output/
+results/

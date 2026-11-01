@@ -1,7 +1,13 @@
 import { compactResult } from './model/session.js';
 import { findModel } from './model/extra-models.js';
+import { subscriptionProblem } from './model/auth.js';
 
 export const EXIT = Object.freeze({ ok: 0, error: 1, usage: 2, fatalKick: 3, reconnect: 75 });
+
+export const MAX_RECONNECTS = 8;
+export function reconnectDelay(attempt) {
+    return Math.min(60000, 5000 * 2 ** Math.max(0, attempt - 1));
+}
 
 const KEY_ENV = {
     anthropic: 'ANTHROPIC_API_KEY',
@@ -24,14 +30,22 @@ export function keyEnvFor(provider) {
 }
 
 export async function checkModel(config, { sdk } = {}) {
-    if (config.model.baseUrl) {
+    if (config.model.baseUrl && !config.subscriptionOnly) {
         if (!config.apiKey && !process.env.MODEL_API_KEY)
             return `--base-url needs a key: set MODEL_API_KEY in .env or the environment.`;
         return null;
     }
     const { ModelRuntime } = sdk ?? (await import('@earendil-works/pi-coding-agent'));
-    const runtime = await ModelRuntime.create({ modelsPath: config.modelsPath ?? null, allowModelNetwork: false });
+    const runtime = await ModelRuntime.create({
+        authPath: config.authPath,
+        modelsPath: config.modelsPath ?? null,
+        allowModelNetwork: false,
+    });
     const { provider, id } = config.model;
+    if (config.subscriptionOnly) {
+        const problem = subscriptionProblem(runtime, config.model, config.apiKey);
+        if (problem) return problem;
+    }
     if (!runtime.getProviders().some(p => p.id === provider))
         return `Unknown provider "${provider}". Run "minecraft-agent models" to see providers with keys set, or "minecraft-agent models --all".`;
     if (!findModel(runtime, provider, id))

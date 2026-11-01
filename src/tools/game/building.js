@@ -1,5 +1,5 @@
 import { abortError, failWith, failureCode, failureFacts, withFailureCode } from './failures.js';
-import { NATURAL_TERRAIN, guardBuiltBlocks } from './guards.js';
+import { canClearTerrain, guardBuiltBlocks } from './guards.js';
 import { PLACE_LINE_MS, PLACE_MS, untilAbort } from './runtime.js';
 import { choice, coords, integer, name } from './schema.js';
 
@@ -61,7 +61,7 @@ export function createBuilding(ctx) {
                 'Target cell is not loaded.',
                 'go_to a point nearer the target, then place again',
             );
-        if (!replaceable.includes(target.name) && target.name !== a.block && NATURAL_TERRAIN.test(target.name)) {
+        if (!replaceable.includes(target.name) && target.name !== a.block && canClearTerrain(target)) {
             try {
                 const b = await reachBlock(active, target, signal);
                 await untilAbort(active.dig(b, true), signal);

@@ -5,6 +5,21 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 export const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'assets');
+
+export async function installRelayFiles(workdir, tools, toolsFile) {
+    const opt = path.join(workdir, '.harness');
+    await fs.mkdir(path.join(workdir, 'bin'), { recursive: true });
+    await fs.mkdir(opt, { recursive: true });
+    for (const name of ['relay.cjs', 'agent_tools.py'])
+        await fs.copyFile(path.join(ASSETS, name), path.join(opt, name));
+    await fs.writeFile(path.join(opt, 'tools.json'), JSON.stringify(tools));
+    const cli = (await fs.readFile(path.join(ASSETS, 'tool'), 'utf8')).replaceAll(
+        '/opt/harness/tools.json',
+        toolsFile ?? path.join(opt, 'tools.json'),
+    );
+    await fs.writeFile(path.join(workdir, 'bin', 'tool'), cli, { mode: 0o755 });
+    return opt;
+}
 export const cap = (text, max) => (Buffer.byteLength(text) > max ? `${text.slice(0, max)}\n…[truncated]` : text);
 
 export function startPoller({ relayUrl, token, invoke, log, onDead }) {
@@ -81,16 +96,8 @@ export function createLocalBackend({ workdir, sharedDir }) {
         async start({ invoke, tools, log }) {
             token = crypto.randomBytes(16).toString('hex');
             home = workdir;
-            await fs.mkdir(path.join(home, 'bin'), { recursive: true });
-            const opt = path.join(home, '.harness');
-            await fs.mkdir(opt, { recursive: true });
-            await fs.copyFile(path.join(ASSETS, 'relay.cjs'), path.join(opt, 'relay.cjs'));
-            await fs.writeFile(path.join(opt, 'tools.json'), JSON.stringify(tools));
-            const toolCli = (await fs.readFile(path.join(ASSETS, 'tool'), 'utf8')).replaceAll(
-                '/opt/harness/tools.json',
-                path.join(opt, 'tools.json'),
-            );
-            await fs.writeFile(path.join(home, 'bin', 'tool'), toolCli, { mode: 0o755 });
+            if (sharedDir) await fs.mkdir(path.join(sharedDir, 'tools'), { recursive: true });
+            const opt = await installRelayFiles(home, tools);
             const port = 20000 + Math.floor(Math.random() * 20000);
             relay = spawn(process.execPath, [path.join(opt, 'relay.cjs'), String(port), token], { stdio: 'ignore' });
             relayUrl = `http://127.0.0.1:${port}`;
@@ -100,6 +107,7 @@ export function createLocalBackend({ workdir, sharedDir }) {
         env() {
             return {
                 HOME: home,
+                PYTHONPATH: path.join(home, '.harness'),
                 PATH: `${path.join(home, 'bin')}:${sharedDir ? path.join(sharedDir, 'tools') + ':' : ''}${process.env.PATH}`,
                 TOOL_API_TOKEN: token,
                 TOOL_RELAY_URL: relayUrl,
@@ -323,6 +331,10 @@ export function createE2bBackend({
                 { timeoutMs: 30000 },
             );
             await sbx.files.write('/opt/harness/relay.cjs', await fs.readFile(path.join(ASSETS, 'relay.cjs'), 'utf8'));
+            await sbx.files.write(
+                '/opt/harness/agent_tools.py',
+                await fs.readFile(path.join(ASSETS, 'agent_tools.py'), 'utf8'),
+            );
             await sbx.files.write('/opt/harness/tools.json', JSON.stringify(tools));
             await sbx.files.write('/opt/harness/tool', await fs.readFile(path.join(ASSETS, 'tool'), 'utf8'));
             await sbx.commands.run('chmod +x /opt/harness/tool && ln -sf /opt/harness/tool ~/bin/tool', {
@@ -345,6 +357,7 @@ export function createE2bBackend({
                 PATH: '/home/user/bin:/shared/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
                 TOOL_API_TOKEN: token,
                 TOOL_RELAY_URL: 'http://127.0.0.1:7777',
+                PYTHONPATH: '/opt/harness',
                 SHARED_TOOLS: '/shared/tools',
             };
         },

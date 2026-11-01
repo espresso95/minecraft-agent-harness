@@ -32,6 +32,10 @@ const LABELS = {
     dry_out: 'dried out',
 };
 export const causeLabel = type => (type ? (LABELS[type] ?? type.replace(/_/g, ' ')) : 'unknown cause');
+export function attackDamageStop(source, cause, targetId, description) {
+    if (!source) return cause === 'starve' ? null : 'environment_damage';
+    return source.id === targetId ? null : `hit_by_other: ${description}`;
+}
 export function installDamageTypes(bot) {
     const client = bot?._client;
     if (!client?.prependListener || bot.pi_damageTypesInstalled) return;

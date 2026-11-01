@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMinecraftSession, createPiSession, interruptedTurn, resumePrompt } from '../../src/model/session.js';
 import { createGameTools } from '../../src/tools/game-tools.js';
+import { MailboxStore } from '../../src/comms/mailbox-store.js';
+import { AgentInbox } from '../../src/comms/inbox.js';
+import { createShellTools } from '../../src/tools/shell-tools.js';
 
 const flush = async () => {
     for (let i = 0; i < 30; i++) await Promise.resolve();
@@ -98,7 +101,7 @@ async function fixture(overrides = {}, manager = store(), clock = new Clock()) {
                 };
             },
             telemetry: item => {
-                const { args, result, ...shape } = item;
+                const { args, result, source, body, cycleId, ...shape } = item;
                 telemetry.push(shape);
                 fullTelemetry.push(item);
             },
@@ -115,6 +118,331 @@ async function fixture(overrides = {}, manager = store(), clock = new Clock()) {
     return { runner, fake, clock, manager, prompts, observations, telemetry, fullTelemetry };
 }
 const tool = (name, execute) => ({ name, description: name, label: name, parameters: {}, execute });
+
+async function standbyFixture(manager = store()) {
+    const stand = tool('standby', async () => ({
+        content: [{ type: 'text', text: JSON.stringify(f.runner.requestStandby()) }],
+    }));
+    stand.idle = true;
+    const f = await fixture({ continuous: true, tools: [stand] }, manager);
+    f.fake.script = async () => {
+        await f.fake.context();
+        await f.fake.call('standby');
+    };
+    return f;
+}
+
+test('explicit standby makes no periodic model calls while passive messages remain queued', async () => {
+    const f = await standbyFixture();
+    f.runner.start();
+    await f.clock.advance();
+    assert.equal(f.runner.standby, true);
+    assert.equal(f.runner.paused, false);
+    assert.equal(f.runner.nextWakeAt, null);
+    f.runner.enqueue('routine update', { passive: true });
+    await f.clock.advance(86400000);
+    assert.equal(f.prompts.length, 1);
+    assert.equal(f.runner.queue.size, 1);
+    await f.runner.close();
+});
+
+test('instructions, direct messages and danger wake standby immediately; pause still overrides them', async () => {
+    for (const key of ['chat:Human', 'direct:Peer', 'damage']) {
+        const f = await standbyFixture();
+        f.runner.start();
+        await f.clock.advance();
+        f.fake.script = async () => {
+            await f.fake.context();
+            f.runner.requestWait(f.clock.now() + 60000);
+        };
+        f.runner.enqueue({ text: key }, { key, urgent: key !== 'damage', wakeWhenIdle: key !== 'damage' });
+        await f.clock.advance();
+        assert.equal(f.prompts.length, 2);
+        assert.equal(f.runner.standby, false);
+        assert.match(f.prompts.at(-1), new RegExp(key));
+        await f.runner.cancel();
+        f.runner.enqueue('human', { urgent: true, wakeWhenIdle: true });
+        await f.clock.advance(600000);
+        assert.equal(f.prompts.length, 2);
+        await f.runner.close();
+    }
+});
+
+test('standby survives a reconnect and never swallows instructions arriving during the request', async () => {
+    const f = await standbyFixture();
+    f.runner.start();
+    await f.clock.advance();
+    await f.runner.close();
+    const resumed = await standbyFixture(f.manager);
+    resumed.runner.start();
+    await resumed.clock.advance(600000);
+    assert.equal(resumed.prompts.length, 0);
+    assert.equal(resumed.runner.standby, true);
+    await resumed.runner.close();
+    const racing = await standbyFixture();
+    let turns = 0;
+    racing.fake.script = async () => {
+        await racing.fake.context();
+        if (++turns === 1) {
+            racing.runner.enqueue('new instruction', { urgent: true, wakeWhenIdle: true });
+            await racing.fake.call('standby');
+        } else racing.runner.requestWait(racing.clock.now() + 60000);
+    };
+    racing.runner.start();
+    await racing.clock.advance();
+    assert.equal(racing.runner.standby, false);
+    await racing.clock.advance(1000);
+    assert.equal(racing.prompts.length, 2);
+    assert.match(racing.prompts[1], /new instruction/);
+    await racing.runner.close();
+});
+
+test('inbox receipt hooks run only for constructed requests and report successful versus failed responses', async () => {
+    let began = 0;
+    const responses = [],
+        cycles = [];
+    const f = await fixture({
+        beforeRequest: () => began++,
+        onResponse: success => responses.push(success),
+        onCycleEnd: value => cycles.push(value),
+    });
+    f.fake.script = async () => {
+        await f.fake.context();
+        f.fake.emit({ type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse', content: [] } });
+        f.fake.emit({
+            type: 'message_end',
+            message: { role: 'assistant', stopReason: 'error', content: [], errorMessage: 'test failure' },
+        });
+    };
+    f.runner.start();
+    await f.clock.advance();
+    assert.equal(began, 1);
+    assert.deepEqual(responses, [true, false]);
+    assert.equal(cycles[0].failed, true);
+    await f.runner.close();
+});
+
+test('real inbox receipts follow request boundaries across failures and messages arriving during generation', async t => {
+    const root = await mkdtemp(join(tmpdir(), 'session-inbox-'));
+    const sender = new MailboxStore(join(root, 'mail.sqlite'), 'Sender');
+    const recipient = new MailboxStore(join(root, 'mail.sqlite'), 'Receiver');
+    let inbox;
+    const f = await fixture({
+        tools: [tool('inspect', async () => ({ content: [{ type: 'text', text: 'world' }] }))],
+        turnHeadline: () => inbox.note(),
+        toolResultNote: () => inbox.note(),
+        beforeRequest: () => inbox.beginRequest(),
+        onResponse: success => inbox.finishRequest(success),
+        onCycleEnd: cycle => inbox.endCycle(cycle),
+    });
+    inbox = new AgentInbox({ store: recipient, peers: ['Sender'], getRunner: () => f.runner, actions: { status: {} } });
+    t.after(async () => {
+        await f.runner.close();
+        sender.close();
+        recipient.close();
+        await rm(root, { recursive: true, force: true });
+    });
+    sender.sendDM('Receiver', 'Original full message');
+    const response = stopReason =>
+        f.fake.emit({ type: 'message_end', message: { role: 'assistant', stopReason, content: [] } });
+    f.fake.script = async () => {
+        await f.fake.context();
+        response('error');
+    };
+    f.runner.start();
+    await f.clock.advance();
+    assert.equal(recipient.unreadMessages().length, 1);
+    f.fake.script = async () => {
+        await f.fake.context();
+        sender.sendDM('Receiver', 'Arrived while thinking');
+        response('toolUse');
+        assert.deepEqual(
+            recipient.unreadMessages().map(m => m.text),
+            ['Arrived while thinking'],
+        );
+        const result = await f.fake.call('inspect');
+        assert.match(result.content.at(-1).text, /Arrived while thinking/);
+        await f.fake.context();
+        response('error');
+    };
+    await f.clock.advance(10000);
+    assert.equal(recipient.unreadMessages().length, 1);
+    f.fake.script = async () => {
+        await f.fake.context();
+        response('stop');
+    };
+    await f.clock.advance(20000);
+    assert.match(f.prompts.at(-1), /Arrived while thinking/);
+    assert.deepEqual(recipient.unreadMessages(), []);
+});
+
+for (const body of [true, false])
+    test(`scripted ${body ? 'body' : 'data'} tools keep JSON clean and deliver new messages at the outer response`, async t => {
+        const root = await mkdtemp(join(tmpdir(), 'script-inbox-'));
+        const sender = new MailboxStore(join(root, 'mail.sqlite'), 'Sender');
+        const recipient = new MailboxStore(join(root, 'mail.sqlite'), 'Receiver');
+        let inbox,
+            f,
+            invoke,
+            executions = 0;
+        const message = 'SYNTHETIC_NEW_INSTRUCTIONS';
+        const native = tool('native_action', async () => {
+            executions++;
+            sender.sendDM('Receiver', message, { urgent: true });
+            const data = body ? { completed: true, result: { count: 1 } } : { count: 1 };
+            return { content: [{ type: 'text', text: JSON.stringify(data) }], details: data };
+        });
+        const shell = createShellTools({
+            backend: {
+                kind: 'synthetic',
+                async start(options) {
+                    invoke = options.invoke;
+                },
+                async run() {
+                    assert.deepEqual(await invoke('native_action', {}), { count: 1 });
+                    await assert.rejects(invoke('native_action', {}), /Batch paused for new instructions/);
+                    assert.equal(executions, 1);
+                    return { stdout: '{"count":1}', stderr: '', exitCode: 0 };
+                },
+                async close() {},
+            },
+            invoke: (name, args) => f.runner.invokeTool(name, args),
+            toolList: () => [native],
+        });
+        f = await fixture({
+            tools: [native, ...shell],
+            shouldYield: () => inbox.shouldYield(),
+            turnHeadline: () => inbox.note(),
+            toolResultNote: () => inbox.note(),
+            beforeRequest: () => inbox.beginRequest(),
+            onResponse: success => inbox.finishRequest(success),
+            onCycleEnd: cycle => inbox.endCycle(cycle),
+        });
+        inbox = new AgentInbox({
+            store: recipient,
+            peers: ['Sender'],
+            getRunner: () => f.runner,
+            actions: { status: {} },
+        });
+        t.after(async () => {
+            await f.runner.close();
+            sender.close();
+            recipient.close();
+            await rm(root, { recursive: true, force: true });
+        });
+        f.fake.script = async () => {
+            await f.fake.context();
+            const result = await f.fake.call('run_shell', { cmd: 'synthetic batch' });
+            assert.equal(result.isError, false);
+            assert.equal(result.content.filter(c => c.text.includes(message)).length, 1);
+            assert.equal(recipient.unreadMessages().length, 1);
+            const outgoing = await f.fake.agent.transformContext(
+                [{ role: 'toolResult', toolName: 'run_shell', content: result.content }],
+                f.fake.abortController.signal,
+            );
+            assert.ok(JSON.stringify(outgoing).includes(message));
+            f.fake.emit({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [] } });
+            assert.deepEqual(recipient.unreadMessages(), []);
+            f.runner.requestWait(f.clock.now() + 60000);
+        };
+        f.runner.start();
+        await f.clock.advance();
+        assert.equal(executions, 1);
+    });
+
+async function idleFixture() {
+    const poll = tool('custom_status', async () => ({ content: [{ type: 'text', text: 'unchanged' }] }));
+    poll.idle = true;
+    const wait = tool('custom_wait', async () => {
+        f.runner.requestWait(f.clock.now() + 60000);
+        return { content: [{ type: 'text', text: 'waiting' }] };
+    });
+    wait.idle = true;
+    const f = await fixture({
+        continuous: true,
+        tools: [poll, wait, tool('custom_work', async () => ({ content: [] }))],
+    });
+    f.fake.script = async () => {
+        await f.fake.context();
+        await f.fake.call('custom_status');
+        await f.fake.call('custom_wait');
+    };
+    f.runner.start();
+    await f.clock.advance();
+    await f.clock.advance(60000);
+    return f;
+}
+
+test('tool-owned idle metadata supports backoff without a scheduler list of tool names', async () => {
+    const f = await idleFixture();
+    assert.equal(f.runner.idleStreak, 2);
+    assert.equal(f.runner.nextWakeAt, f.clock.now() + 120000);
+    f.fake.script = async () => {
+        await f.fake.call('custom_work');
+        await f.fake.call('custom_wait');
+    };
+    await f.clock.advance(120000);
+    assert.equal(f.runner.idleStreak, 0, 'unknown or work tools conservatively reset idle backoff');
+    await f.runner.close();
+});
+
+test('routine chatter preserves idle backoff but remains queued and visible on the scheduled turn', async () => {
+    const f = await idleFixture();
+    const wake = f.runner.nextWakeAt;
+    f.runner.enqueue({ kind: 'chat', text: 'Routine update' }, { key: 'chat:Peer', passive: true });
+    assert.equal(f.runner.idleStreak, 2);
+    assert.equal(f.runner.nextWakeAt, wake);
+    await f.clock.advance(119999);
+    assert.equal(f.prompts.length, 2);
+    await f.clock.advance(1);
+    assert.match(f.prompts.at(-1), /Routine update/);
+    assert.equal(f.runner.idleStreak, 3);
+    assert.equal(f.runner.nextWakeAt, f.clock.now() + 240000);
+    await f.runner.close();
+});
+
+test('idle backoff retains its existing five-minute ceiling', async () => {
+    const f = await idleFixture();
+    await f.clock.advance(120000);
+    await f.clock.advance(240000);
+    for (let i = 0; i < 3; i++) {
+        assert.equal(f.runner.nextWakeAt, f.clock.now() + 300000);
+        await f.clock.advance(300000);
+    }
+    await f.runner.close();
+});
+
+test('human, direct-message and danger wakes override backed-off idle without delay', async () => {
+    for (const key of ['chat:Human', 'direct:Peer', 'damage', 'hit']) {
+        const f = await idleFixture();
+        f.runner.enqueue(
+            { text: key },
+            { key, urgent: true, wakeWhenIdle: true, interrupt: false, passive: key === 'damage' },
+        );
+        await f.clock.advance();
+        assert.equal(f.prompts.length, 3);
+        assert.match(f.prompts.at(-1), new RegExp(key));
+        assert.equal(f.runner.idleStreak, 0);
+        await f.runner.close();
+    }
+});
+
+test('other events preserve their existing conservative wake behavior and paused agents stay paused', async () => {
+    const f = await idleFixture();
+    f.runner.enqueue('non-urgent health event', { key: 'damage', interrupt: false });
+    assert.equal(f.runner.idleStreak, 0);
+    assert.equal(f.runner.nextWakeAt, f.clock.now() + 60000);
+    await f.runner.cancel();
+    f.runner.enqueue('new instruction', { urgent: true, wakeWhenIdle: true });
+    await f.clock.advance(500000);
+    assert.equal(f.prompts.length, 2);
+    assert.equal(f.runner.paused, true);
+    f.runner.start();
+    await f.clock.advance();
+    assert.equal(f.prompts.length, 3);
+    assert.match(f.prompts.at(-1), /new instruction/);
+    await f.runner.close();
+});
 
 test('coalesces passive events; final answer waits 10s; latest FPV once per request', async () => {
     const f = await fixture();
@@ -1217,6 +1545,26 @@ test('a thrown provider error reaches diagnostics and the fatal hook', async () 
     await f.runner.close();
 });
 
+test('revoked OAuth credentials stop the agent while temporary refresh failures can retry', async () => {
+    for (const [message, terminal] of [
+        ['OAuth refresh failed for openai: token request failed (400): {"error":"invalid_grant"}', true],
+        ['OAuth refresh failed for openai: refresh_token_reused', true],
+        ['OAuth refresh failed for openai: token request failed (503): temporarily unavailable', false],
+    ]) {
+        const fatal = [],
+            soft = [];
+        const f = await fixture({ onFatal: m => fatal.push(m), onModelError: m => soft.push(m) });
+        f.fake.script = async () => {
+            throw new Error(message);
+        };
+        f.runner.start();
+        await f.clock.advance();
+        assert.equal(fatal.length, terminal ? 1 : 0, message);
+        assert.equal(soft.length, terminal ? 0 : 1, message);
+        await f.runner.close();
+    }
+});
+
 test('an aborted last turn is found and its reasoning carried into a resume prompt', () => {
     const aborted = {
         type: 'message',
@@ -1278,4 +1626,115 @@ test('the first turn after a resume gets the resume note and low thinking until 
     assert.equal(levels.at(-1), 'medium');
     assert.equal(levels.length, actedAt + 2);
     assert.ok(levels.slice(0, -1).every(level => level === 'minimal'));
+});
+
+test('a direct message wakes a waiting continuous companion without changing normal passive events', async () => {
+    const f = await fixture({ continuous: true });
+    let turns = 0;
+    f.fake.script = async () => {
+        turns++;
+        if (turns === 1) f.runner.requestWait(160000);
+        else f.runner.paused = true;
+    };
+    f.runner.start();
+    await f.clock.advance();
+    assert.equal(f.prompts.length, 1);
+    f.runner.enqueue({ kind: 'direct', text: 'Help me' }, { key: 'direct:Player', urgent: true, wakeWhenIdle: true });
+    await f.clock.advance();
+    assert.equal(f.prompts.length, 2);
+    assert.match(f.prompts[1], /Help me/);
+    assert.equal(f.clock.time, 100000);
+    await f.runner.close();
+});
+
+test('program calls and physical actions have distinct telemetry without losing ordinary model calls', async () => {
+    const physical = { ...tool('physical', async () => ({ content: [{ type: 'text', text: '{}' }] })), body: true };
+    const f = await fixture({ tools: [physical] });
+    f.fake.script = async () => {
+        await f.fake.context();
+        await f.fake.call('physical');
+        await f.runner.invokeTool('physical', {});
+    };
+    f.runner.start();
+    await f.clock.advance();
+    assert.deepEqual(
+        f.fullTelemetry.map(t => [t.source, t.body]),
+        [
+            ['model', true],
+            ['program', true],
+        ],
+    );
+    assert.ok(Number.isSafeInteger(f.fullTelemetry[0].cycleId));
+    assert.equal(f.fullTelemetry[0].cycleId, f.fullTelemetry[1].cycleId);
+    await f.runner.close();
+});
+
+test('a concrete waiting reason persists across reconnect and clears when the next cycle starts', async () => {
+    const manager = store(),
+        f = await fixture({}, manager);
+    f.fake.script = async () => f.runner.requestWait(160000, 'Waiting for a shared prerequisite');
+    f.runner.start();
+    await f.clock.advance();
+    assert.equal(f.runner.waitReason, 'Waiting for a shared prerequisite');
+    await f.runner.close({ preserveSchedule: true });
+    const resumed = await fixture({}, manager);
+    assert.equal(resumed.runner.waitReason, 'Waiting for a shared prerequisite');
+    resumed.runner.start();
+    await resumed.clock.advance(60000);
+    assert.equal(resumed.runner.waitReason, null);
+    await f.runner.close();
+    await resumed.runner.close();
+});
+
+test('a yielded program can save a declared data-only checkpoint but cannot start another action', async () => {
+    const f = await fixture({
+        shouldYield: () => true,
+        tools: [
+            {
+                ...tool('checkpoint_read', async () => ({ content: [{ type: 'text', text: '{"revision":1}' }] })),
+                allowDuringYield: a => a.id === 1,
+            },
+            tool('physical', async () => ({ content: [{ type: 'text', text: '{}' }] })),
+        ],
+    });
+    f.fake.script = async () => {
+        await f.fake.context();
+        assert.deepEqual(await f.runner.invokeTool('checkpoint_read', { id: 1 }), { revision: 1 });
+        await assert.rejects(f.runner.invokeTool('physical', {}), /Batch paused/);
+        await assert.rejects(f.runner.invokeTool('checkpoint_read', { id: 2 }), /Batch paused/);
+    };
+    f.runner.start();
+    await f.clock.advance();
+    assert.equal(f.fullTelemetry.length, 1);
+    await f.runner.close();
+});
+
+test('an instruction arriving during thinking prevents the stale model response from starting a body action', async () => {
+    let executions = 0,
+        pending = true;
+    const physical = {
+        ...tool('physical', async () => {
+            executions++;
+            return { content: [{ type: 'text', text: '{}' }] };
+        }),
+        body: true,
+    };
+    const f = await fixture({
+        tools: [physical],
+        shouldYield: () => pending,
+        toolResultNote: () => (pending ? 'NEW HUMAN INSTRUCTION: change the plan' : null),
+    });
+    f.fake.script = async () => {
+        await f.fake.context();
+        const paused = await f.fake.call('physical');
+        assert.equal(paused.isError, true);
+        assert.match(paused.content.at(-1).text, /NEW HUMAN/);
+        assert.equal(executions, 0);
+        pending = false;
+        await f.fake.call('physical');
+    };
+    f.runner.start();
+    await f.clock.advance();
+    assert.equal(executions, 1);
+    await f.runner.close();
 });

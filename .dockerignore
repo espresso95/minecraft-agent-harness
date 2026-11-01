@@ -11,3 +11,6 @@ server-*
 **/*.pem
 **/*.key
 **/.DS_Store
+mods/
+output/
+results/

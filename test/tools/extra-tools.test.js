@@ -40,6 +40,7 @@ test('extra tools are validated, appended after the built-in tools and run with 
         ],
     });
     assert.equal(tools.at(-1).name, 'buy');
+    assert.equal(tools.at(-1).idle, false);
     const ok = await tools.at(-1).execute('id', { item: 'wool' });
     assert.deepEqual(ok.details, { bought: 'wool' });
     assert.deepEqual(calls, [[{ item: 'wool' }, 'Test']]);
@@ -53,6 +54,16 @@ test('extra tools are validated, appended after the built-in tools and run with 
         () => createGameTools({ bot: fakeBot(), extraTools: [{ name: 'Bad Name', run: () => 1 }] }),
         /snake_case/,
     );
+});
+
+test('extension status tools can declare idle behavior without changing the scheduler', () => {
+    const tools = createGameTools({
+        bot: fakeBot(),
+        observe: async () => ({ state: {} }),
+        extraTools: [{ name: 'crew_status', idle: true, properties: {}, run: () => ({ ready: true }) }],
+    });
+    assert.equal(tools.at(-1).name, 'crew_status');
+    assert.equal(tools.at(-1).idle, true);
 });
 
 test('a tools module is loaded from the configured path with the bot, options and schema helpers', async () => {

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { dockerAvailable } from './sandbox/docker.js';
+import { modelAuthPath } from './model/auth.js';
 
 export const DEFAULTS = Object.freeze({
     host: 'localhost',
@@ -29,6 +30,8 @@ const ENV = {
     model: 'AGENT_MODEL',
     baseUrl: 'MODEL_BASE_URL',
     modelsFile: 'AGENT_MODELS_FILE',
+    subscriptionOnly: 'AGENT_SUBSCRIPTION_ONLY',
+    modelAuthFile: 'AGENT_MODEL_AUTH_FILE',
     thinking: 'AGENT_THINKING',
     sandbox: 'AGENT_SANDBOX',
     dockerImage: 'AGENT_DOCKER_IMAGE',
@@ -43,10 +46,11 @@ const ENV = {
     quiet: 'AGENT_QUIET',
     reconnect: 'AGENT_RECONNECT',
     personality: 'AGENT_PERSONALITY',
+    playerChat: 'AGENT_PLAYER_CHAT',
     toolsModule: 'AGENT_TOOLS_MODULE',
 };
 
-const THINKING = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+const THINKING = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const SANDBOXES = ['none', 'local', 'docker', 'e2b'];
 
 export function defaultSandbox(env, probeDocker = dockerAvailable) {
@@ -125,6 +129,8 @@ export function resolveConfig(
         gameMode: raw.gameMode,
         personality: raw.personality,
         soul,
+        playerChat: raw.playerChat === undefined ? true : bool(raw.playerChat),
+        startPaused: bool(raw.startPaused ?? false),
         team: bool(raw.team ?? false),
         peers: Array.isArray(raw.peers) ? raw.peers.filter(n => /^[A-Za-z0-9_]{1,16}$/.test(n) && n !== raw.name) : [],
         model: {
@@ -137,6 +143,8 @@ export function resolveConfig(
                 : {}),
         },
         apiKey: raw.baseUrl ? env.MODEL_API_KEY : undefined,
+        authPath: raw.modelAuthFile ? path.resolve(cwd, raw.modelAuthFile) : modelAuthPath(stateDir),
+        subscriptionOnly: bool(raw.subscriptionOnly ?? false),
         modelsPath: raw.modelsFile ? path.resolve(cwd, raw.modelsFile) : null,
         thinking: raw.thinking,
         tickRate,
@@ -179,6 +187,7 @@ export function toSettings(config) {
             gameMode: config.gameMode,
             personality: config.personality,
             soul: config.soul,
+            playerChat: config.playerChat,
             peers: config.peers,
             team: config.team,
             pi: {
@@ -196,8 +205,11 @@ export function toAgentOptions(config) {
     return {
         model: config.model,
         apiKey: config.apiKey,
+        authPath: config.authPath,
+        subscriptionOnly: config.subscriptionOnly,
         modelsPath: config.modelsPath,
         thinkingLevel: config.thinking,
+        startPaused: config.startPaused,
         vision: config.vision,
         tickRate: config.tickRate,
         respawn: config.respawn,

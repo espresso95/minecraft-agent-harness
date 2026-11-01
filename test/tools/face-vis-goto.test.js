@@ -129,3 +129,28 @@ test('go_to into solid rock names the block', async () => {
     const r = await tool(b, skills, 'go_to').execute('id', { x: 6, y: 60, z: 0 }, new AbortController().signal);
     assert.match(parse(r).error, /inside solid stone/);
 });
+
+test('ground-block coordinates route to the open feet position above without digging', async () => {
+    const b = bot((_x, y, _z) => y <= 68, [-6, 69, 2]);
+    const visited = [];
+    const skills = {
+        goToPosition: async (_active, x, y, z) => {
+            visited.push({ x, y, z });
+            b.entity.position = new Vec3(x, y, z);
+            return true;
+        },
+    };
+    const result = await tool(b, skills, 'go_to').execute('test', { x: -8, y: 68, z: 1, distance: 0.5 });
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(visited, [{ x: -8, y: 69, z: 1 }]);
+    assert.deepEqual(parse(result).result.target, { x: -8, y: 68, z: 1 });
+    assert.deepEqual(parse(result).result.navigationTarget, visited[0]);
+    assert.ok(parse(result).result.distanceToTarget <= parse(result).result.acceptedWithin);
+    assert.equal(b.gone.size, 0);
+});
+
+test('navigation never reports success outside the requested acceptance radius', async () => {
+    const b = bot((_x, y, _z) => y <= 63, [0.5, 64, 0.5]);
+    const result = await tool(b, { goToPosition: async () => true }, 'go_to').execute('test', { x: 10, y: 64, z: 0 });
+    assert.equal(result.isError, true);
+});

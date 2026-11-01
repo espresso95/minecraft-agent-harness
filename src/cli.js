@@ -4,8 +4,9 @@ import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig, readConfigFile, fromEnv, DEFAULTS } from './config.js';
-import { EXIT, checkModel } from './startup.js';
+import { EXIT, checkModel, reconnectDelay, MAX_RECONNECTS } from './startup.js';
 import { extraModelIds } from './model/extra-models.js';
+import { modelAuthPath } from './model/auth.js';
 
 const BIN = fileURLToPath(new URL('../bin/minecraft-agent.js', import.meta.url));
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -95,7 +96,7 @@ Agent
 
 Model
   -m, --model <p/id>         provider/model-id                (AGENT_MODEL, default ${DEFAULTS.model})
-      --thinking <level>     off | minimal | low | medium | high | xhigh (default ${DEFAULTS.thinking})
+      --thinking <level>     off | minimal | low | medium | high | xhigh | max (default ${DEFAULTS.thinking})
       --base-url <url>       OpenAI Responses compatible endpoint; key from MODEL_API_KEY
       --models-file <path>   pi models.json with custom providers
 
@@ -149,7 +150,11 @@ export async function main(argv = process.argv.slice(2)) {
         console.log(HELP);
         return EXIT.ok;
     }
-    if (command === 'models') return listModels(positionals[0], { all: values.all });
+    if (command === 'models')
+        return listModels(positionals[0], {
+            all: values.all,
+            authPath: modelAuthPath(path.resolve(cwd, values['state-dir'] ?? fromEnv().stateDir ?? DEFAULTS.stateDir)),
+        });
     if (command === 'team') return runTeam(positionals[0] ?? values.config, cwd);
     let config;
     try {
@@ -178,12 +183,6 @@ const sleep = (ms, signal) =>
         const timer = setTimeout(resolve, ms);
         signal.addEventListener('abort', () => (clearTimeout(timer), resolve()), { once: true });
     });
-
-export function reconnectDelay(attempt) {
-    return Math.min(60000, 5000 * 2 ** Math.max(0, attempt - 1));
-}
-
-export const MAX_RECONNECTS = 8;
 
 async function supervise(argv, config) {
     const say = message => process.stdout.write(`[${config.name}] ${message}\n`);
@@ -262,9 +261,9 @@ async function runWorker(config) {
     return EXIT.ok;
 }
 
-async function listModels(provider, { all = false } = {}) {
+async function listModels(provider, { all = false, authPath } = {}) {
     const { ModelRuntime } = await import('@earendil-works/pi-coding-agent');
-    const runtime = await ModelRuntime.create({ modelsPath: null, allowModelNetwork: false });
+    const runtime = await ModelRuntime.create({ authPath, modelsPath: null, allowModelNetwork: false });
     const known = runtime.getProviders().map(p => p.id);
     if (provider && !known.includes(provider)) {
         console.error(`minecraft-agent: unknown provider "${provider}". Known providers: ${known.join(', ')}`);
@@ -302,15 +301,21 @@ async function runTeam(file, cwd) {
     const names = agents.map(a => a.name);
     const stateDir = path.resolve(cwd, common.stateDir ?? fromEnv().stateDir ?? DEFAULTS.stateDir);
     mkdirSync(path.join(stateDir, 'shared'), { recursive: true, mode: 0o700 });
+    if (names.some(n => typeof n !== 'string') || new Set(names.map(n => n.toLowerCase())).size !== names.length) {
+        console.error('minecraft-agent team: agent names must be unique');
+        return EXIT.usage;
+    }
     const configs = agents.map(agent => ({
         ...common,
+        ...fromEnv(),
         ...agent,
         stateDir,
         team: true,
         peers: names.filter(n => n !== agent.name),
     }));
     const childEnv = { ...process.env };
-    for (const key of ['AGENT_NAME', 'AGENT_OBJECTIVE', 'AGENT_PERSONALITY']) delete childEnv[key];
+    for (const key of Object.keys(childEnv))
+        if (key.startsWith('AGENT_') || key.startsWith('MC_') || key === 'MODEL_BASE_URL') delete childEnv[key];
     try {
         for (const c of configs) resolveConfig([c, fromEnv(childEnv)], { cwd });
     } catch (e) {
@@ -340,6 +345,7 @@ async function runTeam(file, cwd) {
     }
     if (server) console.log(`[team] shared machine (${sharedMachine}) listening`);
     const children = [];
+    const completions = [];
     let stopping = false;
     const stopAll = () => {
         if (stopping) return;
@@ -373,9 +379,15 @@ async function runTeam(file, cwd) {
         );
         const child = spawn(process.execPath, [BIN, 'run', '--config', file], { stdio: 'inherit', env: childEnv });
         children.push(child);
+        completions.push(
+            new Promise(resolveExit => {
+                child.once('exit', code => resolveExit(code ?? EXIT.error));
+                child.once('error', () => resolveExit(EXIT.error));
+            }),
+        );
         await new Promise(r => setTimeout(r, staggerSeconds * 1000));
     }
-    await Promise.all(children.map(c => new Promise(r => c.once('exit', r))));
+    const codes = await Promise.all(completions);
     server?.close();
-    return 0;
+    return codes.find(code => code !== EXIT.ok) ?? EXIT.ok;
 }

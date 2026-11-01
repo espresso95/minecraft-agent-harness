@@ -35,13 +35,19 @@ export function createHelpers(ctx) {
         w.stop = () => clearInterval(iv);
         return w;
     }
-    function progressWatch(active, target, { idleMs = 15000, noGainMs = 45000 } = active.pi_goWatch ?? {}) {
+    function progressWatch(active, target, { idleMs = 15000, noGainMs = 45000, within = 0 } = active.pi_goWatch ?? {}) {
         const w = { stalled: null };
-        const dist = p => Math.hypot(p.x - target.x, p.y - target.y, p.z - target.z);
+        const destination = () => (typeof target === 'function' ? target() : target);
+        const dist = p => {
+            const t = destination();
+            return t ? Math.hypot(p.x - t.x, p.y - t.y, p.z - t.z) : Infinity;
+        };
         const p0 = active.entity?.position;
+        const initialTarget = destination();
         let still = p0 && { x: p0.x, y: p0.y, z: p0.z, t: Date.now() },
             best = p0 ? dist(p0) : Infinity,
-            bestT = Date.now();
+            bestT = Date.now(),
+            goal = initialTarget && { x: initialTarget.x, y: initialTarget.y, z: initialTarget.z };
         const iv = setInterval(() => {
             const p = active.entity?.position;
             if (!p) return;
@@ -50,6 +56,18 @@ export function createHelpers(ctx) {
             if (mining || !still || Math.hypot(p.x - still.x, p.y - still.y, p.z - still.z) > 0.5)
                 still = { x: p.x, y: p.y, z: p.z, t: now };
             const d = dist(p);
+            const next = destination();
+            if (next && (!goal || Math.hypot(next.x - goal.x, next.y - goal.y, next.z - goal.z) > 0.75)) {
+                goal = { x: next.x, y: next.y, z: next.z };
+                best = d;
+                bestT = now;
+            }
+            if (d <= within) {
+                still = { x: p.x, y: p.y, z: p.z, t: now };
+                best = d;
+                bestT = now;
+                return;
+            }
             if (d < best - 0.75) {
                 best = d;
                 bestT = now;
@@ -90,6 +108,55 @@ export function createHelpers(ctx) {
             return null;
         } catch {
             return null;
+        }
+    }
+    function standingTarget(active, target, tolerance) {
+        if (typeof active.blockAt !== 'function') return target;
+        const solid = b => b?.boundingBox === 'block';
+        if (!solid(at(active, target.x, target.y, target.z))) return target;
+        // Coordinates often identify the ground block rather than the feet above it.
+        // Only adjust within the caller's existing acceptance radius, without digging.
+        for (let up = 1; up <= Math.min(3, tolerance + 1); up++) {
+            const y = target.y + up;
+            const feet = at(active, target.x, y, target.z),
+                head = at(active, target.x, y + 1, target.z);
+            if (feet && head && passable(feet) && passable(head) && solid(at(active, target.x, y - 1, target.z)))
+                return { x: target.x, y, z: target.z };
+        }
+        return target;
+    }
+    async function navigationRecovery(active, target, signal) {
+        if (signal?.aborted || typeof active.pathfinder?.getPathFromTo !== 'function') return {};
+        try {
+            const { Movements, goals } = await pathfinderModule();
+            const movements = new Movements(active);
+            movements.canDig = false;
+            movements.allow1by1towers = false;
+            movements.allowParkour = false;
+            movements.maxDropDown = SAFE_DROP;
+            const search = active.pathfinder.getPathFromTo(
+                movements,
+                active.entity.position,
+                new goals.GoalNear(target.x, target.y, target.z, 1),
+                { timeout: 100, tickTimeout: 50, searchRadius: 16 },
+            );
+            let path;
+            try {
+                path = search.next().value?.result?.path;
+            } finally {
+                search.return?.();
+            }
+            if (!path?.length || path.some(move => move.toBreak?.length || move.toPlace?.length)) return {};
+            const last = path.at(-1);
+            const waypoint = { x: last.x, y: last.y, z: last.z };
+            const distance = point => Math.hypot(point.x - target.x, point.y - target.y, point.z - target.z);
+            if (distance(waypoint) >= distance(active.entity.position) - 1) return {};
+            return {
+                waypoint,
+                next: 'A local walking path reaches this waypoint without mining or placing. Walk there, inspect the changed view and retry the original task; this is not a complete route to the original target.',
+            };
+        } catch {
+            return {};
         }
     }
     async function withDeadline(active, promise, ms) {
@@ -251,7 +318,7 @@ export function createHelpers(ctx) {
             throw failWith(
                 'no_path',
                 `Cannot walk to a spot with a view of the ${b.name} at ${p.x},${p.y},${p.z} (${String(pathError?.message ?? pathError).slice(0, 60)})`,
-                { target: p, ...hint },
+                { target: p, ...hint, ...(await navigationRecovery(active, p, signal)) },
             );
         throw failWith(
             'not_visible_or_range',
@@ -260,6 +327,8 @@ export function createHelpers(ctx) {
         );
     }
     return {
+        standingTarget,
+        navigationRecovery,
         DIRS,
         at,
         cellKey,

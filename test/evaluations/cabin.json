@@ -1,0 +1,111 @@
+{
+  "objective": "Together you have 20 minutes in survival mode. Complete this oak cabin and resource task in the provided peaceful test world. Start with an empty inventory; gather and craft everything yourself. There are ten oak trees around the grass platform; stay within the glass boundary. Build an oak cabin with EXACT outer footprint x=0..4,z=0..4: a full 5x5 oak-plank floor at y=65; perimeter oak-plank walls at y=66 and y=67 except the doorway at x=2,z=0; a full flat 5x5 oak-plank roof at y=68; an oak door with lower half at (2,66,0), upper half at (2,67,0), usable from outside. Keep the interior walkable and free of scaffolding. Place a chest at (1,66,1) and crafting table at (3,66,1). Put at least 8 raw oak logs in that chest, craft and keep a wooden pickaxe (in your inventory or chest), then verify the completed cabin. Keep ~/notes/task.md with coordinates and honest progress. Do not claim completion until verified. Cooperate with your teammates, choose your own plan and roles; if finished early, verify and maintain the completed state until the deadline.",
+  "blockChecks": [
+    {
+      "label": "Floor",
+      "name": "oak_planks",
+      "boxes": [
+        {
+          "from": [0, 65, 0],
+          "to": [4, 65, 4]
+        }
+      ]
+    },
+    {
+      "label": "Walls",
+      "name": "oak_planks",
+      "boxes": [
+        {
+          "from": [0, 66, 0],
+          "to": [4, 67, 0]
+        },
+        {
+          "from": [0, 66, 4],
+          "to": [4, 67, 4]
+        },
+        {
+          "from": [0, 66, 0],
+          "to": [0, 67, 4]
+        },
+        {
+          "from": [4, 66, 0],
+          "to": [4, 67, 4]
+        }
+      ],
+      "exclude": [
+        [2, 66, 0],
+        [2, 67, 0]
+      ]
+    },
+    {
+      "label": "Roof",
+      "name": "oak_planks",
+      "boxes": [
+        {
+          "from": [0, 68, 0],
+          "to": [4, 68, 4]
+        }
+      ]
+    },
+    {
+      "label": "Door lower",
+      "name": "oak_door",
+      "positions": [[2, 66, 0]],
+      "properties": {
+        "half": "lower"
+      }
+    },
+    {
+      "label": "Door upper",
+      "name": "oak_door",
+      "positions": [[2, 67, 0]],
+      "properties": {
+        "half": "upper"
+      }
+    },
+    {
+      "label": "Chest",
+      "name": "chest",
+      "positions": [[1, 66, 1]]
+    },
+    {
+      "label": "Crafting table",
+      "name": "crafting_table",
+      "positions": [[3, 66, 1]]
+    },
+    {
+      "label": "Walkable interior",
+      "name": "air",
+      "boxes": [
+        {
+          "from": [1, 66, 1],
+          "to": [3, 67, 3]
+        }
+      ],
+      "exclude": [
+        [1, 66, 1],
+        [3, 66, 1]
+      ]
+    }
+  ],
+  "containers": [
+    {
+      "label": "Stored raw logs",
+      "at": [1, 66, 1],
+      "name": "chest",
+      "items": [
+        {
+          "name": "oak_log",
+          "minimum": 8
+        }
+      ]
+    }
+  ],
+  "inventoryChecks": [
+    {
+      "label": "Wooden pickaxe",
+      "name": "wooden_pickaxe",
+      "minimum": 1
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { activityLine, checkModel, connectionMessage, isFatalKick, kickText, summarizeResult } from '../src/startup.js';
-import { reconnectDelay, MAX_RECONNECTS } from '../src/cli.js';
+import { reconnectDelay, MAX_RECONNECTS } from '../src/startup.js';
 import { resolveConfig, toSettings } from '../src/config.js';
 
 test('kick reasons become readable text and only bans or auth problems stop reconnecting', () => {

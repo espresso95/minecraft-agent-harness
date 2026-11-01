@@ -1,0 +1,70 @@
+name: minecraft-terra
+x-runtime: &runtime
+  user: '${LOCAL_UID}:${LOCAL_GID}'
+  group_add:
+    - '${DOCKER_SOCKET_GID}'
+  network_mode: host
+  volumes:
+    - ${LOCAL_STATE_DIR}:${LOCAL_STATE_DIR}
+    - /var/run/docker.sock:/var/run/docker.sock
+  depends_on:
+    server:
+      condition: service_healthy
+  stop_grace_period: 20s
+services:
+  server:
+    image: itzg/minecraft-server:java21
+    environment:
+      EULA: 'TRUE'
+      TYPE: PAPER
+      VERSION: '1.21.6'
+      ONLINE_MODE: 'FALSE'
+      DIFFICULTY: peaceful
+      SEED: '2024'
+      SPAWN_PROTECTION: '0'
+      VIEW_DISTANCE: '8'
+      SIMULATION_DISTANCE: '6'
+      MAX_PLAYERS: '8'
+      MEMORY: 2G
+      UID: ${LOCAL_UID}
+      GID: ${LOCAL_GID}
+    ports:
+      - '127.0.0.1:${LOCAL_MC_PORT:-25565}:25565'
+    volumes:
+      - ${LOCAL_STATE_DIR}/server:/data
+    stop_grace_period: 60s
+  agent:
+    <<: *runtime
+    image: minecraft-terra-harness:local
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    environment:
+      MC_HOST: 127.0.0.1
+      MC_PORT: ${LOCAL_MC_PORT:-25565}
+      AGENT_NAME: Terra
+      AGENT_MODEL: openai/gpt-6.1-terra
+      AGENT_THINKING: medium
+      AGENT_SUBSCRIPTION_ONLY: '1'
+      AGENT_STATE_DIR: ${LOCAL_STATE_DIR}
+      AGENT_SANDBOX: docker
+      AGENT_DOCKER_MEMORY: 512m
+      AGENT_DOCKER_CPUS: '1'
+      AGENT_DURATION_MINUTES: ${AGENT_DURATION_MINUTES:-20}
+      AGENT_OBJECTIVE: ${AGENT_OBJECTIVE:-Gather wood and build a small wooden shelter near spawn with a floor, walls, a door and a roof. Keep notes about its coordinates and your progress.}
+      DOCKER_HOST: unix:///var/run/docker.sock
+      AGENT_USAGE_FILE: ${AGENT_USAGE_FILE:-}
+      NODE_OPTIONS: --disable-warning=ExperimentalWarning --import=/app/scripts/usage-observer.js
+  controller:
+    <<: *runtime
+    profiles: ['companions']
+    image: minecraft-companions:local
+    entrypoint: ['node', 'scripts/companions-controller.js']
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      COMPANION_STATE_DIR: ${LOCAL_STATE_DIR}/companions
+      COMPANION_AUTH_FILE: ${LOCAL_STATE_DIR}/auth.json
+      COMPANION_PORT: ${COMPANION_PORT:-8766}
+      COMPANION_AUTO_START: ${COMPANION_AUTO_START:-1}
+      COMPANION_SERVER_DIR: ${LOCAL_STATE_DIR}/server
+      COMPANION_SERVER_CONTAINER: minecraft-companions-server-1

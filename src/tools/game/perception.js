@@ -11,14 +11,14 @@ export function createPerception(ctx) {
             block: { ...name, minLength: 0, pattern: '^[a-z0-9_]*$' },
         },
         (a, { signal }) => observe({ ...a, image: a.image ?? !perStepFrames, signal }),
-        { required: [] },
+        { required: [], idle: true },
     );
     add(
         'look',
         'Turn your view; yaw and pitch are degrees.',
         { yaw: number(-180, 180), pitch: number(-90, 90) },
         call('look', a => [a.yaw, a.pitch]),
-        body,
+        { ...body, idle: true },
     );
     add(
         'inspect_block',

@@ -1,6 +1,7 @@
 export function createSessionHistoryTool(getEntries) {
     return {
         name: 'session_history',
+        idle: true,
         label: 'Private session history',
         description:
             'Search your own persisted session text, including messages before compaction. Literal case-insensitive query (empty lists recent messages), newest first. Omit before or use 0 to start at the newest page; pass a positive nextBefore as before for older pages, and stop when nextBefore is null. Text excerpts are capped at 2000 characters per entry and 12000 JSON characters per page. Does not search reasoning, images, or other agents.',

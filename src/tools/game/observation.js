@@ -15,7 +15,41 @@ export function inventory(bot) {
     };
 }
 
-export function createObservation({ bot, perception, world, captureFrame, mailbox }) {
+// Full snapshots, with repeated field names written once. Only rectangular
+// collections are packed; mixed shapes and small collections stay ordinary JSON.
+function observationTable(records) {
+    if (!Array.isArray(records) || records.length < 2) return records;
+    const flatten = (value, path = [], cells = []) => {
+        if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length)
+            for (const [key, child] of Object.entries(value)) flatten(child, [...path, key], cells);
+        else cells.push([path, value]);
+        return cells;
+    };
+    if (!records.every(record => record && typeof record === 'object' && !Array.isArray(record))) return records;
+    const flattened = records.map(record => flatten(record));
+    const columns = flattened[0].map(([path]) => path);
+    const schema = JSON.stringify(columns);
+    if (!flattened.every(cells => JSON.stringify(cells.map(([path]) => path)) === schema)) return records;
+    const table = { columns, rows: flattened.map(cells => cells.map(([, value]) => value)) };
+    return Buffer.byteLength(JSON.stringify(table)) < Buffer.byteLength(JSON.stringify(records)) ? table : records;
+}
+
+export function serializeObservation(state) {
+    // Match the existing JSON semantics for undefined values, numbers and dates.
+    // Do not mutate the live snapshot used by tools, scripts or telemetry.
+    const snapshot = JSON.parse(JSON.stringify(state));
+    for (const [parent, key] of [
+        [snapshot, 'blocks'],
+        [snapshot, 'entities'],
+        [snapshot.inventory, 'items'],
+        [snapshot.recentPublicChat, 'messages'],
+        ...['goals', 'current', 'ready', 'blocked'].map(key => [snapshot.work, key]),
+    ])
+        if (parent && Object.hasOwn(parent, key)) parent[key] = observationTable(parent[key]);
+    return JSON.stringify(snapshot);
+}
+
+export function createObservation({ bot, perception, world, captureFrame, mailbox, actionRunner }) {
     return async ({ image = true, range = 16, block = '', signal } = {}) => {
         if (signal?.aborted) throw abortError('Observation cancelled');
         if (!bot.entity?.position) throw new Error('Player has not spawned.');
@@ -43,6 +77,7 @@ export function createObservation({ bot, perception, world, captureFrame, mailbo
             pitch: bot.entity.pitch,
             health: bot.health,
             food: bot.food,
+            ...(actionRunner ? { action: actionRunner.status } : {}),
             oxygen: bot.oxygenLevel,
             ...(bot.isSleeping ? { inBed: true } : {}),
             gameMode: bot.game?.gameMode,
@@ -52,7 +87,13 @@ export function createObservation({ bot, perception, world, captureFrame, mailbo
             blocks,
             entities,
             visibility: '360-degree local line-of-sight survey; not a chunk or hidden-entity scan.',
-            ...(mailbox ? { messaging: mailbox.summary(), recentPublicChat: mailbox.recentChat() } : {}),
+            ...(mailbox
+                ? {
+                      messaging: mailbox.summary(),
+                      recentPublicChat: mailbox.recentChat(),
+                      ...(mailbox.work ? { work: mailbox.work() } : {}),
+                  }
+                : {}),
         };
         let frame;
         if (image) {

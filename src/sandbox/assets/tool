@@ -1,22 +1,27 @@
-#!/usr/bin/env bash
-set -euo pipefail
-RELAY="${TOOL_RELAY_URL:-http://127.0.0.1:7777}"; TOKEN="${TOOL_API_TOKEN:?TOOL_API_TOKEN not set}"
-TOOLS_JSON="/opt/harness/tools.json"
-PYLIST='import json,sys
-for t in json.load(open(sys.argv[1])): print("%-22s %s" % (t["name"], t["description"][:110]))'
-PYHELP='import json,sys
-for t in json.load(open(sys.argv[1])):
-    if t["name"]==sys.argv[2]: print(json.dumps(t,indent=1))'
-if [[ "${1:-}" == "--list" ]]; then python3 -c "$PYLIST" "$TOOLS_JSON"; exit 0; fi
-if [[ "${1:-}" == "--help" ]]; then python3 -c "$PYHELP" "$TOOLS_JSON" "${2:?name}"; exit 0; fi
-NAME="${1:?usage: tool <name> [json-args]}"; ARGS="${2:-{\}}"
-BODY=$(python3 -c 'import json,sys
-try: a=json.loads(sys.argv[2])
-except Exception: sys.stderr.write("args must be a JSON object\n"); sys.exit(2)
-if not isinstance(a,dict): sys.stderr.write("args must be a JSON object\n"); sys.exit(2)
-print(json.dumps({"name":sys.argv[1],"args":a}))' "$NAME" "$ARGS")
-RESP=$(curl -sS --max-time 605 -H "x-token: $TOKEN" -H 'content-type: application/json' -d "$BODY" "$RELAY/call")
-python3 -c 'import json,sys
-r=json.loads(sys.stdin.read())
-if r.get("ok"): print(json.dumps(r.get("result"),separators=(",",":"))); sys.exit(0)
-sys.stderr.write((r.get("error") or "tool failed")+"\n"); sys.exit(1)' <<<"$RESP"
+#!/usr/bin/env python3
+import json
+import sys
+from agent_tools import call
+
+TOOLS_JSON = '/opt/harness/tools.json'
+
+try:
+    args = sys.argv[1:]
+    if not args:
+        raise ValueError('usage: tool <name> [json-args] | --list | --help <name>')
+    if args[0] in ('--list', '--help'):
+        with open(TOOLS_JSON) as file:
+            tools = json.load(file)
+        if args[0] == '--list':
+            for tool in tools:
+                print('%-22s %s' % (tool['name'], tool['description'][:110]))
+        else:
+            matches = [tool for tool in tools if len(args) == 2 and tool['name'] == args[1]]
+            if not matches:
+                raise ValueError('Unknown tool')
+            print(json.dumps(matches[0], indent=1))
+    else:
+        print(json.dumps(call(args[0], json.loads(args[1]) if len(args) > 1 else {}), separators=(',', ':')))
+except Exception as error:
+    print(str(error), file=sys.stderr)
+    sys.exit(1)

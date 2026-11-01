@@ -22,6 +22,9 @@
     "node": ">=22.19"
   },
   "scripts": {
+    "login": "node scripts/subscription.js login",
+    "subscription:check": "node scripts/subscription.js check",
+    "play": "node scripts/companions-play.js",
     "start": "node bin/minecraft-agent.js",
     "postinstall": "patch-package",
     "test": "node --test \"test/**/*.test.js\"",
@@ -30,7 +33,15 @@
     "format:check": "prettier --check .",
     "check": "npm run lint && npm run format:check && npm test",
     "server": "node scripts/dev-server.js",
-    "vision:install": "npm install --no-save prismarine-viewer@1.33.0 node-canvas-webgl@0.3.0 && patch-package --patch-dir src/vision/patches"
+    "vision:install": "npm install --no-save prismarine-viewer@1.33.0 node-canvas-webgl@0.3.0 && patch-package --patch-dir src/vision/patches",
+    "companions": "node scripts/companions-local.js up",
+    "companions:stop": "node scripts/companions-local.js down",
+    "companions:logs": "node scripts/companions-local.js logs",
+    "companions:pair": "node scripts/companions-local.js pair",
+    "mod:build": "node scripts/build-mod.js",
+    "companions:client": "node scripts/build-mod.js runClient",
+    "test:companions": "node scripts/verify-companions.js",
+    "eval:team": "node scripts/evaluate-team.js"
   },
   "keywords": [
     "minecraft",
@@ -41,18 +52,20 @@
     "ai"
   ],
   "dependencies": {
-    "@earendil-works/pi-ai": "0.82.0",
-    "@earendil-works/pi-coding-agent": "0.82.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
     "e2b": "^2.59.0",
     "minecraft-data": "3.116.0",
     "mineflayer": "4.33.0",
     "mineflayer-collectblock": "1.6.0",
     "mineflayer-pathfinder": "2.4.5",
     "mineflayer-pvp": "1.3.2",
+    "mojangson": "2.1.0",
     "patch-package": "^8.0.1",
     "prismarine-item": "1.18.0",
     "ses": "1.15.0",
-    "vec3": "0.1.10"
+    "vec3": "0.1.10",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -212,12 +212,13 @@ function integer(value, min, max, label) {
     if (!Number.isSafeInteger(value) || value < min || value > max) fail(`Invalid ${label}.`);
     return value;
 }
-function tool(name, description, parameters, run, outputBytes) {
+function tool(name, description, parameters, run, outputBytes, { idle = false } = {}) {
     return {
         name,
         label: name,
         description,
         parameters,
+        idle,
         async execute(_toolCallId, args, signal) {
             try {
                 checkAbort(signal);
@@ -316,6 +317,7 @@ export async function createWorkspaceTools({
     sharedRoot,
     webSearch,
     onWait,
+    onStandby,
     now = Date.now,
     limits: overrides = {},
     sesPath,
@@ -345,7 +347,8 @@ export async function createWorkspaceTools({
     }
     if (!path.isAbsolute(sesPath)) throw new Error('sesPath must be absolute.');
     const readLimit = Math.min(limits.fileBytes, Math.floor((limits.outputBytes - 1024) / 6));
-    const make = (name, description, parameters, run) => tool(name, description, parameters, run, limits.outputBytes);
+    const make = (name, description, parameters, run, options) =>
+        tool(name, description, parameters, run, limits.outputBytes, options);
     const tools = [
         make(
             'workspace_read',
@@ -510,10 +513,21 @@ export async function createWorkspaceTools({
         tools.push(
             make(
                 'wait',
-                'Request idle time until a deadline; returns immediately. Nothing wakes you early; messages wait in your mailbox.',
-                schema({ seconds: { type: 'number', exclusiveMinimum: 0, maximum: limits.maxWaitMs / 1000 } }),
+                'Request idle time until a deadline. If shared work is ready but you cannot usefully proceed, give a concrete reason. Relevant events can wake you early; routine progress does not interrupt work.',
+                schema(
+                    {
+                        seconds: { type: 'number', exclusiveMinimum: 0, maximum: limits.maxWaitMs / 1000 },
+                        reason: { type: 'string', minLength: 1, maxLength: 500 },
+                    },
+                    ['seconds'],
+                ),
                 async (args, signal) => {
-                    assertArgs(args, ['seconds']);
+                    assertArgs(args, ['seconds'], ['reason']);
+                    if (
+                        args.reason !== undefined &&
+                        (typeof args.reason !== 'string' || !args.reason.trim() || args.reason.length > 500)
+                    )
+                        fail('Give a nonblank waiting reason of at most 500 characters.');
                     if (
                         typeof args.seconds !== 'number' ||
                         !Number.isFinite(args.seconds) ||
@@ -523,9 +537,23 @@ export async function createWorkspaceTools({
                         fail('Invalid wait duration.');
                     checkAbort(signal);
                     const deadlineMs = now() + Math.ceil(args.seconds * 1000);
-                    await onWait(deadlineMs);
-                    return { requestedIdleUntil: deadlineMs };
+                    const decision = await onWait(deadlineMs, args.reason);
+                    return decision && typeof decision === 'object' ? decision : { requestedIdleUntil: deadlineMs };
                 },
+                { idle: true },
+            ),
+        );
+    if (onStandby)
+        tools.push(
+            make(
+                'standby',
+                'Explicit standby until meaningful instructions or danger arrive. Use only when the human asked you to stand by and you have no unfinished assigned tasks. Ordinary quiet periods and ongoing work use wait for periodic reviews. Following and local safety checks continue. No model polling while on standby.',
+                schema({}, []),
+                async args => {
+                    assertArgs(args, []);
+                    return onStandby();
+                },
+                { idle: true },
             ),
         );
     return tools;

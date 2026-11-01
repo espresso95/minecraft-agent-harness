@@ -1,6 +1,6 @@
 import { abortError, failWith, withFailureCode } from './failures.js';
 import { DOORISH, doorOpen, fmtDrop, guardBuiltBlocks } from './guards.js';
-import { actionBoundaries, allowedGameMode, flyCooperatively, requireFunction, untilAbort } from './runtime.js';
+import { allowedGameMode, flyCooperatively, requireFunction, untilAbort } from './runtime.js';
 import { choice, coords, number } from './schema.js';
 
 export function createMovement(ctx) {
@@ -11,12 +11,14 @@ export function createMovement(ctx) {
         bot,
         call,
         goToHint,
+        navigationRecovery,
         passable,
         pathfinderModule,
         progressWatch,
         r2,
         runner,
         skills,
+        standingTarget,
         stallWatch,
         withDeadline,
     } = ctx;
@@ -25,14 +27,21 @@ export function createMovement(ctx) {
         'go_to',
         'Walk to coordinates. May dig through natural terrain (dirt, stone, sand, leaves...) and pillar up with dirt/cobblestone from your inventory; never breaks built blocks. Stops within `distance` blocks of the target (default 2) and reports where it actually stopped. Failures explain why and suggest a next step.',
         { ...coords, distance: number(0.5, 8) },
-        async (a, { bot: active }) => {
+        async (a, { bot: active, signal }) => {
             const tolerance = a.distance ?? 2;
+            const target = standingTarget(active, a, tolerance);
             const watch = stallWatch(active),
-                prog = progressWatch(active, a),
+                prog = progressWatch(active, target),
                 t0 = Date.now();
             let reached;
             try {
-                reached = await requireFunction(skills, 'goToPosition')(active, a.x, a.y, a.z, tolerance);
+                reached = await requireFunction(skills, 'goToPosition')(
+                    active,
+                    target.x,
+                    target.y,
+                    target.z,
+                    tolerance,
+                );
             } finally {
                 watch.stop();
                 prog.stop();
@@ -42,12 +51,14 @@ export function createMovement(ctx) {
             const round = v => Math.round(v * 100) / 100;
             const facts = {
                 target: { x: a.x, y: a.y, z: a.z },
+                ...(target !== a ? { navigationTarget: target } : {}),
                 tolerance,
                 acceptedWithin: tolerance + 1,
                 stoppedAt: p ? { x: round(p.x), y: round(p.y), z: round(p.z) } : null,
                 distanceToTarget: p ? round(Math.hypot(p.x - a.x, p.y - a.y, p.z - a.z)) : null,
                 eyeY: p ? round(p.y + (active.entity.eyeHeight ?? 1.62)) : null,
             };
+            if (facts.distanceToTarget > facts.acceptedWithin) reached = false;
             if (!reached) {
                 const out = String(active.output || '');
                 const s = facts.stoppedAt,
@@ -89,6 +100,7 @@ export function createMovement(ctx) {
                 throw failWith(code, msg, {
                     ...facts,
                     ...(hint ? { hint } : {}),
+                    ...(await navigationRecovery(active, target, signal)),
                     pathfinder: out.trim().split('\n').slice(-3).join(' | '),
                 });
             }
@@ -261,40 +273,27 @@ export function createMovement(ctx) {
                     active.pathfinder.setMovements(m);
                 } catch {}
                 const pathEnd = Date.now() + 60000;
-                const boundary = actionBoundaries.get(bot),
-                    owner = boundary?.context.getStore(),
-                    rawEmit = bot.emit;
-                if (owner)
-                    bot.emit = function (ev, ...args) {
-                        return ev === 'physicsTick'
-                            ? boundary.context.run(owner, () => rawEmit.call(this, ev, ...args))
-                            : rawEmit.call(this, ev, ...args);
-                    };
-                try {
-                    for (const c of targets.filter((c, i) => i < 2 || i % 7 === 0).slice(0, 4)) {
-                        if (Date.now() > pathEnd) break;
-                        if (signal?.aborted) throw signal.reason ?? abortError('Tool cancelled');
-                        tried.push(`${c.cx},${c.t + 1},${c.cz}`);
+                for (const c of targets.filter((c, i) => i < 2 || i % 7 === 0).slice(0, 4)) {
+                    if (Date.now() > pathEnd) break;
+                    if (signal?.aborted) throw signal.reason ?? abortError('Tool cancelled');
+                    tried.push(`${c.cx},${c.t + 1},${c.cz}`);
+                    try {
+                        await withDeadline(
+                            active,
+                            active.pathfinder.goto(new goals.GoalBlock(c.cx, c.t + 1, c.cz)),
+                            Math.max(3000, Math.min(40000, pathEnd - Date.now())),
+                        );
+                    } catch (e) {
+                        why = `no route to ${c.cx},${c.t + 1},${c.cz}: ${String(e?.message ?? e).slice(0, 60)}`;
+                    } finally {
                         try {
-                            await withDeadline(
-                                active,
-                                active.pathfinder.goto(new goals.GoalBlock(c.cx, c.t + 1, c.cz)),
-                                Math.max(3000, Math.min(40000, pathEnd - Date.now())),
-                            );
-                        } catch (e) {
-                            why = `no route to ${c.cx},${c.t + 1},${c.cz}: ${String(e?.message ?? e).slice(0, 60)}`;
-                        } finally {
-                            try {
-                                active.pathfinder.setGoal?.(null);
-                            } catch {}
-                        }
-                        if (atSurface() && Math.floor(active.entity.position.y + 0.01) >= surfaceY) {
-                            method = 'path';
-                            break;
-                        }
+                            active.pathfinder.setGoal?.(null);
+                        } catch {}
                     }
-                } finally {
-                    if (owner) bot.emit = rawEmit;
+                    if (atSurface() && Math.floor(active.entity.position.y + 0.01) >= surfaceY) {
+                        method = 'path';
+                        break;
+                    }
                 }
             } else
                 why =

@@ -1,0 +1,8 @@
+services:
+  server:
+    cpuset: ${BENCH_CPUSET}
+    mem_limit: 4g
+  agent:
+    image: ${BENCH_AGENT_IMAGE}
+    cpuset: ${BENCH_CPUSET}
+    mem_limit: 4g

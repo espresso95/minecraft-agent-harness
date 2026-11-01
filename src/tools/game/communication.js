@@ -4,34 +4,57 @@ import { integer, peer, text } from './schema.js';
 export function createCommunication(ctx) {
     const { add, bot, mailbox, peers, plan, whisperPlayers } = ctx;
     if (mailbox) {
-        add('message_status', 'Your unread DM counts and public-chat counts; does not mark read.', {}, () =>
-            mailbox.summary(),
+        add(
+            'message_status',
+            'Your unread DM counts and public-chat counts; does not mark read.',
+            {},
+            () => mailbox.summary(),
+            { idle: true },
         );
         add(
             'send_dm',
             whisperPlayers
-                ? 'Send a private message to a player who is online (delivered in game as a whisper, /tell). No handshake or required reply.'
-                : 'Send a private asynchronous message as yourself. No handshake, interruption or required reply.',
-            { to: peer, text: text(whisperPlayers ? 256 : 2000) },
+                ? 'Send targeted coordination privately: registered teammates receive asynchronous mailbox DMs, even offline; online humans receive a short whisper preview with the full message in the mailbox. Prefer this over public chat for delegation and progress. No handshake or required reply.'
+                : 'Send a private asynchronous mailbox message to a registered teammate, even offline. Prefer this for targeted coordination. No handshake or required reply.',
+            {
+                to: peer,
+                text: text(2000),
+                urgent: {
+                    type: 'boolean',
+                    description: 'Interrupt active work only for time-critical instructions. Default: false.',
+                },
+            },
             a => {
                 const lower = a.to.toLowerCase();
                 const player = whisperPlayers
                     ? Object.keys(bot.players ?? {}).find(p => p.toLowerCase() === lower)
                     : undefined;
-                const recipient = peers.find(p => p.toLowerCase() === lower) ?? player;
+                const teammate = peers.find(p => p.toLowerCase() === lower);
+                const recipient = teammate ?? player;
                 if (lower === bot.username.toLowerCase() || !recipient)
                     throw new Error(
                         whisperPlayers
-                            ? 'That player is not online. Use the exact name of an online player.'
+                            ? 'Choose a registered teammate or an online human player by exact name.'
                             : 'Choose another registered bot by exact name.',
                     );
                 if (!a.text.trim()) throw new Error('Message must not be blank.');
-                if (player && recipient === player) {
-                    if (/[\r\n]/.test(a.text)) throw new Error('Whispers must be one line.');
-                    bot.whisper(player, a.text);
+                const metadata = { ...(a.urgent !== undefined ? { urgent: a.urgent } : {}) };
+                const id = mailbox.sendDM(recipient, a.text, metadata);
+                if (player && !teammate) {
+                    // One bounded whisper avoids chat-spam kicks; the complete original
+                    // remains available in both mailbox interfaces.
+                    const line = a.text.replace(/[\r\n]+/g, ' '),
+                        suffix = '… (full message in mailbox)';
+                    const limit = (bot.supportFeature?.('lessCharsInChat') ? 100 : 256) - `/tell ${player} `.length;
+                    const preview =
+                        line.length > limit
+                            ? line.slice(0, limit - suffix.length).replace(/[\uD800-\uDBFF]$/, '') + suffix
+                            : line;
+                    bot.whisper(player, preview);
                 }
-                return { sent: true, id: mailbox.sendDM(recipient, a.text), recipient };
+                return { sent: true, id, recipient };
             },
+            { required: ['to', 'text'] },
         );
         add(
             'read_dms',
@@ -42,14 +65,14 @@ export function createCommunication(ctx) {
                 limit: integer(1, 50),
             },
             a => mailbox.readDMs(a.peer ?? '', a.after ?? -1, a.limit ?? 20),
-            { required: [] },
+            { required: [], idle: true },
         );
         add(
             'read_chat',
             'Read public speech you heard. after=-2 latest, -1 oldest unread, 0 history, then nextAfter. Only returned messages become read.',
             { after: integer(-2, Number.MAX_SAFE_INTEGER), limit: integer(1, 50) },
             a => mailbox.readChat(a.after ?? -2, a.limit ?? 20),
-            { required: [] },
+            { required: [], idle: true },
         );
     }
     add(

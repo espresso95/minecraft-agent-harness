@@ -1,5 +1,5 @@
 import { abortError, failWith } from './failures.js';
-import { NATURAL_TERRAIN, SAFE_DROP, fmtDrop, openDropBelow } from './guards.js';
+import { canClearTerrain, SAFE_DROP, fmtDrop, openDropBelow } from './guards.js';
 import { gatherSkips, posKey, requireFunction, settleInventory, untilAbort } from './runtime.js';
 import { coords, count, name, object } from './schema.js';
 
@@ -14,6 +14,7 @@ export function createGathering(ctx) {
         pickupDrops,
         progressWatch,
         skills,
+        shouldYield,
         stallWatch,
         withDeadline,
         world,
@@ -49,7 +50,8 @@ export function createGathering(ctx) {
                 minedAt = [];
             let mined = 0,
                 misses = 0,
-                stopCode = null;
+                stopCode = null,
+                yielded = false;
             const onAbort = () => {
                 try {
                     active.pathfinder.setGoal(null);
@@ -87,6 +89,10 @@ export function createGathering(ctx) {
                 }
                 while (mined < a.count && misses < 5 && Date.now() - started < 100000) {
                     if (signal?.aborted) throw signal.reason ?? abortError('Tool cancelled');
+                    if (shouldYield()) {
+                        yielded = true;
+                        break;
+                    }
                     const now = Date.now();
                     const target = requireFunction(world, 'getNearestBlocks')(active, types, 64, near ? 256 : 64).find(
                         b =>
@@ -115,7 +121,7 @@ export function createGathering(ctx) {
             } finally {
                 signal?.removeEventListener('abort', onAbort);
             }
-            if (!mined) {
+            if (!mined && !yielded) {
                 if (skipped.length) {
                     const code = stopCode ?? skipped[skipped.length - 1].code;
                     throw failWith(
@@ -153,7 +159,7 @@ export function createGathering(ctx) {
             return {
                 mined,
                 requested: a.count,
-                ...(gained
+                ...(gained || !mined
                     ? {}
                     : {
                           dropsMissed:
@@ -165,6 +171,12 @@ export function createGathering(ctx) {
                         .filter(([, delta]) => delta),
                 ),
                 ...(skipped.length ? { skipped: skipped.slice(0, 5) } : {}),
+                ...(yielded
+                    ? {
+                          yielded: true,
+                          reason: 'New instructions need review. Keep this progress and resume the remaining count after reviewing messages.',
+                      }
+                    : {}),
                 note: 'Mined count is not pickup count; inspect inventory delta. May partially complete.',
             };
         },
@@ -396,8 +408,10 @@ export function createGathering(ctx) {
                     skip('unbreakable');
                     continue;
                 }
-                if (!a.include_built && !NATURAL_TERRAIN.test(b.name)) {
-                    skip('built block; pass include_built:true to break it');
+                if (!a.include_built && !canClearTerrain(b)) {
+                    skip(
+                        'protected by the clearing policy (possibly a built block); pass include_built:true only with permission',
+                    );
                     continue;
                 }
                 let hold = holdsYouUp(active, c.x, c.y, c.z);

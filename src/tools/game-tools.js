@@ -4,6 +4,7 @@ import { createHelpers } from './game/helpers.js';
 import { createCore } from './game/core.js';
 import { createPerception } from './game/perception.js';
 import { createMovement } from './game/movement.js';
+import { createFollowing } from './game/following.js';
 import { createGathering } from './game/gathering.js';
 import { createPlacement } from './game/placement.js';
 import { createBuilding } from './game/building.js';
@@ -12,12 +13,13 @@ import { createCombat } from './game/combat.js';
 import { createCrafting } from './game/crafting.js';
 import { createContainers } from './game/containers.js';
 import { createCommunication } from './game/communication.js';
+import { createWork } from './game/work.js';
 
 export { failureCode, withFailureCode, withFailureFacts } from './game/failures.js';
 export {
     DOORISH,
     KEEP_MOVING_TOOLS,
-    NATURAL_TERRAIN,
+    canClearTerrain,
     SAFE_DROP,
     doorOpen,
     edgeGuardTick,
@@ -30,7 +32,7 @@ export {
     tossLandDistance,
     tossPitchFor,
 } from './game/guards.js';
-export { createObservation } from './game/observation.js';
+export { createObservation, serializeObservation } from './game/observation.js';
 export {
     CHEST_MS,
     CRAFT_MS,
@@ -50,6 +52,7 @@ const TOOL_ORDER = [
     'inventory',
     'stop_action',
     'go_to',
+    'follow_player',
     'fly_to',
     'move',
     'look',
@@ -74,6 +77,7 @@ const TOOL_ORDER = [
     'drop_item',
     'attack',
     'flee',
+    'recipes',
     'craft',
     'open_container',
     'furnace',
@@ -83,6 +87,10 @@ const TOOL_ORDER = [
     'sleep',
     'wake',
     'message_status',
+    'work_plan',
+    'work_tasks',
+    'work_claim',
+    'work_update',
     'send_dm',
     'read_dms',
     'read_chat',
@@ -95,6 +103,7 @@ const BUILDERS = [
     createCore,
     createPerception,
     createMovement,
+    createFollowing,
     createGathering,
     createPlacement,
     createBuilding,
@@ -103,6 +112,7 @@ const BUILDERS = [
     createCrafting,
     createContainers,
     createCommunication,
+    createWork,
 ];
 
 export function createGameTools({
@@ -119,10 +129,11 @@ export function createGameTools({
     perStepFrames = false,
     whisperPlayers = false,
     extraTools = [],
+    shouldYield = () => false,
 } = {}) {
     installSkillCompatibility(bot);
     const runner = actionRunner ?? createActionRunner(bot);
-    observe ??= createObservation({ bot, perception, world, captureFrame, mailbox });
+    observe ??= createObservation({ bot, perception, world, captureFrame, mailbox, actionRunner: runner });
     const tools = [];
     const ctx = {
         bot,
@@ -139,6 +150,7 @@ export function createGameTools({
         whisperPlayers,
         runner,
         tools,
+        shouldYield,
     };
     for (const build of BUILDERS) Object.assign(ctx, build(ctx));
     for (const spec of extraTools) {
@@ -148,6 +160,7 @@ export function createGameTools({
             throw new Error(`Extra tool ${spec.name} clashes with a built-in tool`);
         ctx.add(spec.name, String(spec.description ?? ''), spec.properties ?? {}, spec.run, {
             body: spec.body === true,
+            idle: spec.idle === true,
             ...(spec.required ? { required: spec.required } : {}),
         });
     }

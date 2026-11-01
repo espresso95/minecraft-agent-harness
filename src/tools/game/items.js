@@ -14,11 +14,13 @@ export function createItems(ctx) {
         invCount,
         leaveBed,
         pathfinderModule,
+        progressWatch,
         skills,
+        stallWatch,
         sleepAbortable,
         withDeadline,
     } = ctx;
-    add('inventory', 'Inspect your own inventory and equipped items.', {}, () => inventory(bot));
+    add('inventory', 'Inspect your own inventory and equipped items.', {}, () => inventory(bot), { idle: true });
     add(
         'interact_block',
         'Use a visible block within ordinary reach, such as a lever, button or workbench (for doors and gates prefer door / go_through_door, which know whether it is open).',
@@ -86,6 +88,8 @@ export function createItems(ctx) {
                     );
                 if (active.entity.position.distanceTo(target.position) > 1.8) {
                     const { Movements, goals } = await pathfinderModule();
+                    const watch = progressWatch(active, () => target.position, { within: 1.8 });
+                    const jumps = stallWatch(active);
                     const onAbort = () => {
                         try {
                             active.pathfinder.setGoal(null);
@@ -95,13 +99,7 @@ export function createItems(ctx) {
                     signal?.addEventListener('abort', onAbort, { once: true });
                     try {
                         active.pathfinder.setMovements(new Movements(active));
-                        await withDeadline(
-                            active,
-                            active.pathfinder.goto(
-                                new goals.GoalNear(target.position.x, target.position.y, target.position.z, 1),
-                            ),
-                            30000,
-                        );
+                        await withDeadline(active, active.pathfinder.goto(new goals.GoalFollow(target, 1)), 30000);
                     } catch (error) {
                         if (signal?.aborted) throw signal.reason ?? abortError('Tool cancelled');
                         throw failWith(
@@ -110,8 +108,16 @@ export function createItems(ctx) {
                             {},
                         );
                     } finally {
+                        watch.stop();
+                        jumps.stop();
                         signal?.removeEventListener('abort', onAbort);
                     }
+                    if (watch.stalled || jumps.stalled || active.entity.position.distanceTo(target.position) > 2.8)
+                        throw failWith(
+                            'no_path',
+                            `Could not get close enough to ${a.to}. Nothing was dropped. Ask them to stand on reachable ground, then retry.`,
+                            {},
+                        );
                     target = active.players?.[pl.username]?.entity ?? target;
                 }
                 const dx = target.position.x - active.entity.position.x,

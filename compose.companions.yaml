@@ -1,0 +1,5 @@
+services:
+  server:
+    environment:
+      # The native server owns difficulty; the image still manages its RCON credential.
+      DIFFICULTY: null

@@ -12,6 +12,7 @@ export function createDirectoryTools({ bot, peers, self }) {
     return [
         {
             name: 'directory',
+            idle: true,
             label: 'directory',
             description:
                 'List the other agents in this world, with whether each is online and their position when they are in view.',
@@ -20,6 +21,7 @@ export function createDirectoryTools({ bot, peers, self }) {
         },
         {
             name: 'directory_search',
+            idle: true,
             label: 'directory search',
             description: 'Find other agents whose name contains query (case-insensitive).',
             parameters: {

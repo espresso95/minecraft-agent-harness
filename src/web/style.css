@@ -1,0 +1,293 @@
+:root {
+    color-scheme: dark;
+    font-family: system-ui, sans-serif;
+    background: #0d1420;
+    color: #e8f0ff;
+}
+* {
+    box-sizing: border-box;
+}
+body {
+    margin: 0 auto;
+    max-width: 1250px;
+    padding: 20px;
+}
+header,
+.agent-heading,
+.columns,
+.paging {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+header h1 {
+    font-size: 23px;
+    margin: 0;
+}
+header span {
+    color: #91a7c3;
+    flex: 1;
+}
+h2 {
+    font-size: 19px;
+    margin: 0 0 12px;
+}
+h3 {
+    font-size: 16px;
+}
+p,
+small {
+    color: #9fb3cd;
+    line-height: 1.45;
+}
+button,
+input,
+select,
+textarea {
+    font: inherit;
+    border: 1px solid #35475f;
+    border-radius: 6px;
+    background: #162337;
+    color: inherit;
+    padding: 9px 12px;
+}
+button {
+    cursor: pointer;
+}
+button:hover {
+    background: #243952;
+}
+button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+input,
+select,
+textarea {
+    width: 100%;
+    min-width: 0;
+}
+label {
+    display: block;
+    margin: 14px 0;
+    color: #b7cae1;
+}
+label input,
+label select,
+label textarea {
+    margin-top: 7px;
+}
+button.active {
+    border-color: #77ddb0;
+    background: #1b3b37;
+}
+.card {
+    max-width: 440px;
+    margin: 60px auto;
+    padding: 25px;
+    border: 1px solid #35475f;
+    border-radius: 10px;
+}
+#notice {
+    min-height: 24px;
+    margin: 12px 0;
+}
+#workspace {
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 24px;
+}
+[hidden] {
+    display: none !important;
+}
+#workspace > * {
+    min-width: 0;
+}
+aside {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+#roster {
+    max-height: 72vh;
+    overflow: auto;
+}
+#roster button {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    width: 100%;
+    text-align: left;
+    margin-bottom: 6px;
+}
+.avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    background-color: #35475f;
+    background-size: 256px auto;
+    background-position: -32px -32px;
+    image-rendering: pixelated;
+}
+#roster small {
+    display: block;
+    font-size: 12px;
+}
+.agent-heading > div {
+    flex: 1;
+    min-width: 0;
+}
+.agent-heading p {
+    font-size: 13px;
+    margin: 0;
+}
+nav {
+    display: flex;
+    gap: 8px;
+    margin: 18px 0;
+}
+#filters {
+    display: flex;
+    gap: 12px;
+}
+#filters label {
+    flex: 1;
+    margin: 0 0 12px;
+}
+#filters label.check {
+    flex: 0 0 auto;
+    align-self: flex-end;
+}
+#messages {
+    height: 44vh;
+    min-height: 180px;
+    overflow: auto;
+    padding: 14px;
+    background: #141f30;
+    border: 1px solid #25374c;
+    border-radius: 7px;
+}
+.message {
+    margin-bottom: 18px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.message small {
+    display: block;
+    margin-bottom: 4px;
+}
+.message p {
+    margin: 0;
+    color: #e8f0ff;
+}
+#send-form {
+    display: flex;
+    gap: 8px;
+    margin: 12px 0;
+}
+#send-form input {
+    flex: 1;
+}
+.columns label {
+    flex: 1;
+    min-width: 0;
+}
+.columns label:first-child {
+    flex: 2;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
+}
+td {
+    padding: 10px;
+    border-bottom: 1px solid #25374c;
+}
+td:last-child {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+tr.total {
+    color: #77ddb0;
+}
+details {
+    position: relative;
+}
+details[open] {
+    background: #162337;
+    padding: 10px;
+    border: 1px solid #35475f;
+    border-radius: 6px;
+}
+details button,
+details small {
+    display: block;
+    margin-top: 8px;
+}
+dialog {
+    width: min(580px, 90vw);
+    max-height: 90vh;
+    overflow: auto;
+    background: #101c2b;
+    border: 1px solid #35475f;
+    border-radius: 10px;
+    color: inherit;
+    padding: 24px;
+}
+dialog::backdrop {
+    background: #0009;
+}
+.check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.check input {
+    width: auto;
+    margin: 0;
+}
+#invite {
+    white-space: pre-wrap;
+    font-family: monospace;
+    line-height: 1.7;
+    margin: 15px 0;
+}
+hr {
+    border: 0;
+    border-top: 1px solid #35475f;
+    margin: 24px 0;
+}
+@media (max-width: 680px) {
+    body {
+        padding: 12px;
+    }
+    #workspace {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    #roster {
+        display: flex;
+        gap: 6px;
+        max-width: 100%;
+        max-height: 120px;
+    }
+    #roster button {
+        width: auto;
+        min-width: 140px;
+    }
+    aside {
+        gap: 6px;
+    }
+    .columns {
+        display: block;
+    }
+    .agent-heading {
+        align-items: flex-start;
+    }
+    header span {
+        display: none;
+    }
+    #messages {
+        height: 38vh;
+    }
+}

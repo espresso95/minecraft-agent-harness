@@ -29,7 +29,9 @@ What changes in team mode:
 - `shared_exec` runs commands on one machine shared by the whole team. Its working directory (`/shared` on E2B,
   `<state-dir>/shared-machine` locally) has `plans/`, `notes/` and `tools/`, and every command is appended to `log`
   with its author.
-- Public chat and the noticeboard are turned off so coordination goes through DMs and the shared machine.
+- The noticeboard is turned off. Player chat and whispers remain enabled by default so human players can talk to the team; set `playerChat: false` to disable them. Registered teammates use the internal mailbox for DMs, without duplicate whispers.
+
+For a local two-agent installation with an in-game mailbox and token panel, see [companions.md](companions.md).
 
 `sharedMachine` can be:
 

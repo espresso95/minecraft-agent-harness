@@ -37,6 +37,8 @@ export function runtimeStatus(runner, actionRunner, bot, now = Date.now()) {
         nextWakeAt:
             !runner?.paused && !runner?.closed && Number.isFinite(runner?.nextWakeAt) ? runner.nextWakeAt : null,
         paused: Boolean(runner?.paused),
+        standby: Boolean(runner?.standby),
+        waitReason: runner?.waitReason ?? null,
         action: actionRunner.status.active,
         blocked: actionRunner.status.blocked,
         health: bot.health,

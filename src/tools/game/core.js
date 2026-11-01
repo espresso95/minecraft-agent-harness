@@ -19,7 +19,13 @@ export function createCore(ctx) {
         await done;
         if (!woke) active.isSleeping = false;
     };
-    const add = (toolName, description, properties, fn, { body = false, required } = {}) => {
+    const add = (
+        toolName,
+        description,
+        properties,
+        fn,
+        { body = false, required, idle = false, allowDuringYield } = {},
+    ) => {
         const parameters = object(properties, required);
         if (body) parameters.properties.timeout_ms = integer(1, 120000);
         tools.push({
@@ -27,6 +33,9 @@ export function createCore(ctx) {
             label: toolName.replaceAll('_', ' '),
             description,
             parameters,
+            idle,
+            body,
+            allowDuringYield,
             async execute(_id, args, signal) {
                 let code = 'validation';
                 try {

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Minecraft Companions</title>
+        <link rel="stylesheet" href="/style.css" />
+        <script src="/app.js" defer></script>
+    </head>
+    <body>
+        <header>
+            <h1>Companions</h1>
+            <span id="connection">Local Minecraft controls</span><button id="host-button" hidden>Host settings</button>
+        </header>
+        <p id="notice" role="status"></p>
+        <form id="pair" class="card">
+            <h2>Pair this device</h2>
+            <p>Enter the code shown in the host’s Minecraft panel or launcher.</p>
+            <label>Your player name<input id="player" maxlength="16" required autocomplete="username" /></label
+            ><label>Pairing code<input id="code" maxlength="16" required autocomplete="off" /></label
+            ><button>Connect</button>
+        </form>
+        <div id="workspace" hidden>
+            <aside>
+                <div id="roster"></div>
+                <button id="add">Add agent</button>
+            </aside>
+            <main>
+                <div class="agent-heading">
+                    <div>
+                        <h2 id="selected-title">Team</h2>
+                        <p id="summary"></p>
+                    </div>
+                    <button id="primary">Pause all</button>
+                    <details id="more">
+                        <summary>More</summary>
+                        <button id="stop">Stop agent</button><button id="remove">Remove agent</button
+                        ><small>Removal retains memory and history.</small>
+                    </details>
+                </div>
+                <nav>
+                    <button data-tab="chat">Chat</button><button data-tab="work">Work</button
+                    ><button data-tab="settings">Settings</button><button data-tab="usage">Usage</button>
+                </nav>
+                <section id="chat">
+                    <div id="filters">
+                        <label class="check"><input id="agents-only" type="checkbox" />Agents only</label>
+                        <label>From<select id="sender"></select></label
+                        ><label>To<select id="recipient"></select></label>
+                    </div>
+                    <div id="messages" aria-live="polite"></div>
+                    <form id="send-form">
+                        <input id="message" maxlength="2000" placeholder="Message companions…" required /><button>
+                            Send
+                        </button>
+                    </form>
+                    <div class="paging"><button id="older">Older</button><button id="latest">Latest</button></div>
+                </section>
+                <section id="work" hidden>
+                    <div id="work-summary"></div>
+                    <div id="work-items"></div>
+                </section>
+                <form id="settings" hidden>
+                    <label id="name-label">Name<input id="name" maxlength="16" required /></label>
+                    <div class="columns">
+                        <label>Model<select id="model"></select></label
+                        ><label>Thinking effort<select id="thinking"></select></label>
+                    </div>
+                    <label
+                        >Minecraft skin account<input
+                            id="skin"
+                            maxlength="16"
+                            placeholder="Minecraft username; blank for default skin" /></label
+                    ><label>Personality<textarea id="personality" maxlength="4000" rows="3"></textarea></label
+                    ><label>Task<textarea id="objective" maxlength="4000" rows="4" required></textarea></label
+                    ><button id="save-profile">Save settings</button>
+                    <p>
+                        Model or instruction changes reconnect that agent and retain its paused state. Skin changes
+                        apply in the server.
+                    </p>
+                </form>
+                <section id="usage" hidden>
+                    <button id="period">This session</button>
+                    <table>
+                        <tbody id="usage-rows"></tbody>
+                    </table>
+                    <p>
+                        Cached input is part of input; reasoning is part of output. Unknown requests can add usage.
+                        Subscription deductions are not reported.
+                    </p>
+                </section>
+            </main>
+        </div>
+        <dialog id="host">
+            <form id="host-form">
+                <h2>Host settings</h2>
+                <label>Server difficulty<select id="difficulty"></select></label
+                ><label class="check"><input id="permanent" type="checkbox" /> Permanent death</label>
+                <p>
+                    Dead players become spectators and companions retire. Disabling permanent death does not revive
+                    recorded deaths.
+                </p>
+                <button>Apply host settings</button>
+            </form>
+            <hr />
+            <h3>Local network access</h3>
+            <label class="check"><input id="lan" type="checkbox" /> Share on the local network</label>
+            <p>
+                Paired devices get the same controls and information. Share the code only with people you trust to
+                manage the agents and server. Connections use HTTP on your local network.
+            </p>
+            <div id="invite"></div>
+            <button id="rotate">Revoke paired devices</button><button id="host-close">Back</button>
+        </dialog>
+    </body>
+</html>
