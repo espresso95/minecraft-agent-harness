@@ -6,7 +6,7 @@ import {
     distribution,
     assertEvaluationHealthy,
     auditWorld,
-    parseContainerItems,
+    readContainerItems,
 } from '../../scripts/lib/team-evaluation.js';
 
 test('independent audit reads a blocked chest without opening or changing it', async () => {
@@ -26,8 +26,11 @@ test('independent audit reads a blocked chest without opening or changing it', a
             containers: [{ at: [0, 64, 0], name: 'chest', items: [{ name: 'birch_log', minimum: 8 }] }],
         },
         command: async text => {
-            if (text === 'data get block 0 64 0 Items')
-                return '0, 64, 0 has the following block data: [{Slot: 0b, id: "minecraft:birch_log", count: 8}]';
+            if (text.startsWith('tp ') || text === 'save-all flush') return '';
+            if (text.endsWith('Items[0].id')) return 'Block data: "minecraft:birch_log"';
+            if (text.endsWith('Items[0].count')) return 'Block data: 8';
+            if (text.endsWith('Items[1].id')) return 'Found no elements matching Items[1].id';
+            throw Error('Unexpected audit query: ' + text);
         },
         profiles: [],
         serverDir: 'unused',
@@ -36,12 +39,31 @@ test('independent audit reads a blocked chest without opening or changing it', a
     assert.deepEqual(audit.containers[0].items, [{ name: 'birch_log', count: 8 }]);
 });
 
-test('container parser handles structured NBT and refuses failed commands', () => {
-    assert.deepEqual(parseContainerItems('Block data: [{id:"minecraft:oak_log",Count:8b,Slot:0b}]'), [
-        { name: 'oak_log', count: 8 },
-    ]);
-    assert.deepEqual(parseContainerItems('Block data: []'), []);
-    assert.throws(() => parseContainerItems('Not a block entity'), /did not return/);
+test('container audit reads scalar fields without relying on truncated list output', async () => {
+    const records = [
+        { name: 'oak_log', count: 20 },
+        { name: 'wooden_pickaxe', count: 1 },
+        { name: 'wooden_pickaxe', count: 1 },
+    ];
+    const items = await readContainerItems(
+        async query => {
+            const match = query.match(/Items\[(\d+)\]\.(id|count)$/);
+            assert.ok(match, 'full list reads would truncate');
+            const item = records[Number(match[1])];
+            if (!item) return 'Found no elements matching ' + match[0];
+            return 'Block data: ' + JSON.stringify(match[2] === 'id' ? 'minecraft:' + item.name : item.count);
+        },
+        [8, 65, -4],
+    );
+    assert.deepEqual(items, records);
+    await assert.rejects(
+        readContainerItems(async () => 'Not a block entity', [0, 0, 0]),
+        /did not return/,
+    );
+    await assert.rejects(
+        readContainerItems(async () => 'Block data: "...', [0, 0, 0]),
+        /truncated/,
+    );
 });
 
 test('evaluation fails on stopped agents or missing inference instead of reporting an empty successful run', () => {

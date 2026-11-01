@@ -1,3 +1,4 @@
+import { knownChecksMet, waitConditionMet } from './work/checks.js';
 import { installRespawn } from './body/respawn.js';
 import { once } from 'node:events';
 import { installOxygenIsolation } from './body/oxygen.js';
@@ -320,7 +321,22 @@ export async function startAgent(settings, options = {}) {
         mailbox = new MailboxStore(c.mailboxPath, name, {
             onCommit: () => process.send?.({ type: 'mailbox_committed' }, () => {}),
         });
-        inbox = new AgentInbox({ store: mailbox, peers, getRunner: () => runner, actions: actionRunner, record });
+        inbox = new AgentInbox({
+            store: mailbox,
+            peers,
+            getRunner: () => runner,
+            checkWait: watch =>
+                waitConditionMet(watch, mailbox.tasks(), checks =>
+                    knownChecksMet(bot, perception, checks, mailbox.resources()),
+                ),
+            actions: actionRunner,
+            record,
+        });
+        const checkWaiting = () => {
+            if (runner?.waitFor?.checks?.length) inbox.notifyWork();
+        };
+        bot.inventory.on('updateSlot', checkWaiting);
+        bot.on('blockUpdate', checkWaiting);
         if (!team || profile.playerChat !== false) {
             bot.on('chat', (from, text) => receive(from, text));
             bot.on('whisper', (from, text) => receive(from, text, 'direct'));
@@ -517,7 +533,23 @@ export async function startAgent(settings, options = {}) {
         const workspaceTools = await createWorkspaceTools({
             privateRoot: workspaceRoots.private,
             sharedRoot: workspaceRoots.shared,
-            onWait: (until, reason) => {
+            onWait: (until, reason, condition) => {
+                let watch = null;
+                if (condition) {
+                    const tasks = mailbox.tasks();
+                    const watched = (condition.tasks ?? []).map(id => {
+                        const task = tasks.find(t => t.id === id);
+                        if (!task) throw Error(`Unknown task #${id}`);
+                        return [id, task.attentionRevision];
+                    });
+                    watch = { tasks: Object.fromEntries(watched), checks: condition.checks ?? [] };
+                    if (
+                        waitConditionMet(watch, tasks, checks =>
+                            knownChecksMet(bot, perception, checks, mailbox.resources()),
+                        )
+                    )
+                        return { conditionMet: true, requestedIdleUntil: null };
+                }
                 const work = mailbox.work();
                 if (
                     work.readyCount &&
@@ -530,7 +562,7 @@ export async function startAgent(settings, options = {}) {
                         reason: 'Shared work is ready. Claim suitable work, record a blocker, or give a concrete waiting reason.',
                         work,
                     };
-                return runner.requestWait(until, reason);
+                return runner.requestWait(until, reason, watch);
             },
             onStandby: () => {
                 const unfinishedTaskIds = mailbox.unfinishedTasks();
@@ -599,6 +631,8 @@ export async function startAgent(settings, options = {}) {
                     runShell,
                     bot,
                     perception,
+                    inspectContainer: (check, signal) =>
+                        runner.invokeTool('inspect_container', { x: check.x, y: check.y, z: check.z }, signal),
                 }),
             );
             if (runShell)

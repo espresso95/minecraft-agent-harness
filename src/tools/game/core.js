@@ -1,5 +1,14 @@
 import { abortError, failureCode, failureFacts, withFailureCode } from './failures.js';
-import { CHEST_MS, CRAFT_MS, GATHER_MS, PLACE_LINE_MS, PLACE_MS, SMELT_MS, requireFunction } from './runtime.js';
+import {
+    CHEST_MS,
+    CRAFT_MS,
+    GATHER_MS,
+    PLACE_LINE_MS,
+    PLACE_MS,
+    SMELT_MS,
+    requireFunction,
+    isBodyTool,
+} from './runtime.js';
 import { integer, object, result, validate } from './schema.js';
 
 export function createCore(ctx) {
@@ -40,12 +49,13 @@ export function createCore(ctx) {
                 let code = 'validation';
                 try {
                     validate(parameters, args);
+                    const physical = isBodyTool({ body }, args);
                     code = 'unknown';
                     if (signal?.aborted) throw abortError('Tool cancelled');
                     const invoke = async context => {
-                        if (body) context.bot.output = '';
+                        if (physical) context.bot.output = '';
                         let leftBed = false;
-                        if (body && toolName !== 'sleep' && toolName !== 'wake' && bot.isSleeping) {
+                        if (physical && toolName !== 'sleep' && toolName !== 'wake' && bot.isSleeping) {
                             await leaveBed(bot);
                             leftBed = true;
                         }
@@ -59,7 +69,7 @@ export function createCore(ctx) {
                                 missingItem ? 'missing_item' : 'action_failed',
                             );
                         }
-                        return body
+                        return physical
                             ? {
                                   completed: true,
                                   result: value ?? null,
@@ -70,10 +80,10 @@ export function createCore(ctx) {
                     };
                     const hits = [];
                     const onHit = ev => hits.push(ev);
-                    if (body) bot.on?.('pi_hit', onHit);
+                    if (physical) bot.on?.('pi_hit', onHit);
                     let value;
                     try {
-                        value = body
+                        value = physical
                             ? await runner.run(toolName, invoke, {
                                   signal,
                                   timeoutMs:
@@ -95,7 +105,7 @@ export function createCore(ctx) {
                               })
                             : await invoke({ bot, signal });
                     } finally {
-                        if (body) bot.off?.('pi_hit', onHit);
+                        if (physical) bot.off?.('pi_hit', onHit);
                     }
                     if (hits.length && value && typeof value === 'object' && value.completed) {
                         value.hitsDuring = hits.map(h => ({

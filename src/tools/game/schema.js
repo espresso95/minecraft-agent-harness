@@ -22,11 +22,23 @@ export const object = (properties, required = Object.keys(properties)) => ({
 });
 
 export function validate(schema, value, path = 'arguments') {
+    if (schema.anyOf) {
+        const errors = [];
+        for (const variant of schema.anyOf) {
+            try {
+                validate(variant, value, path);
+                return;
+            } catch (error) {
+                errors.push(error.message);
+            }
+        }
+        throw new Error(`${path} does not match an allowed form: ${errors.join('; ')}`);
+    }
     if (schema.type === 'object') {
         if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${path} must be an object`);
         for (const key of schema.required) if (!(key in value)) throw new Error(`${path}.${key} is required`);
         for (const [key, v] of Object.entries(value)) {
-            if (!Object.hasOwn(schema.properties, key)) throw new Error(`Unknown argument ${key}`);
+            if (!Object.hasOwn(schema.properties, key)) throw new Error(`Unknown argument ${path}.${key}`);
             validate(schema.properties[key], v, `${path}.${key}`);
         }
     } else if (schema.type === 'string') {
@@ -42,7 +54,7 @@ export function validate(schema, value, path = 'arguments') {
     } else if (schema.type === 'array') {
         if (!Array.isArray(value) || value.length < schema.minItems || value.length > schema.maxItems)
             throw new Error(`Invalid ${path}`);
-        value.forEach(v => validate(schema.items, v, path));
+        value.forEach((v, i) => validate(schema.items, v, `${path}[${i}]`));
     } else if (
         !Number.isFinite(value) ||
         value < schema.minimum ||

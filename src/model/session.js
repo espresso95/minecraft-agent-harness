@@ -1,7 +1,8 @@
 import { mkdir, chmod } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createSessionHistoryTool } from './session-history.js';
-import { failureCode } from '../tools/game-tools.js';
+import { failureCode, isBodyTool } from '../tools/game-tools.js';
+import { registerClaudeCode } from './claude-code.js';
 import { findModel } from './extra-models.js';
 import { subscriptionProblem } from './auth.js';
 import { sanitizeImages, isImageRejection, redactPayloads } from './image-guard.js';
@@ -12,11 +13,27 @@ export async function createMinecraftSession(options, dependencies = {}) {
     return runner;
 }
 
+
+
 export async function createPiSession(options, modules) {
     const sdk = modules?.sdk ?? (await import('@earendil-works/pi-coding-agent'));
     const directory = join(resolve(options.sessionDir), options.agentId);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await chmod(directory, 0o700);
+    const modelRuntime = await sdk.ModelRuntime.create({
+        authPath: options.authPath ?? join(directory, 'auth.json'),
+        modelsPath: options.modelsPath ?? null,
+        allowModelNetwork: false,
+    });
+    const m = options.model ?? {};
+    if (options.subscriptionOnly || m.provider === 'claude-code') {
+        const problem = subscriptionProblem(modelRuntime, m, options.apiKey);
+        if (problem) throw new Error(problem);
+    }
+    if (m.provider === 'claude-code') await registerClaudeCode(modelRuntime, modules?.modelRequest);
+    const model = m.baseUrl
+        ? await registerCompatibleModel(modelRuntime, m, options, modules)
+        : await resolveCatalogModel(modelRuntime, m, options);
     const settingsManager = sdk.SettingsManager.inMemory({
         compaction: { enabled: true },
         retry: { enabled: false, provider: { maxRetries: 0 } },
@@ -24,19 +41,6 @@ export async function createPiSession(options, modules) {
         enableInstallTelemetry: false,
         enableSkillCommands: false,
     });
-    const modelRuntime = await sdk.ModelRuntime.create({
-        authPath: options.authPath ?? join(directory, 'auth.json'),
-        modelsPath: options.modelsPath ?? null,
-        allowModelNetwork: false,
-    });
-    const m = options.model ?? {};
-    if (options.subscriptionOnly) {
-        const problem = subscriptionProblem(modelRuntime, m, options.apiKey);
-        if (problem) throw new Error(problem);
-    }
-    const model = m.baseUrl
-        ? await registerCompatibleModel(modelRuntime, m, options, modules)
-        : await resolveCatalogModel(modelRuntime, m, options);
     const resourceLoader = new sdk.DefaultResourceLoader({
         cwd: options.cwd,
         agentDir: directory,
@@ -63,7 +67,11 @@ export async function createPiSession(options, modules) {
         tools: options.tools.map(tool => tool.name),
         customTools: options.tools,
     });
-    return { session, sessionManager, compatible: Boolean(m.baseUrl) };
+    return {
+        session,
+        sessionManager,
+        compatible: Boolean(m.baseUrl),
+    };
 }
 
 async function resolveCatalogModel(modelRuntime, m, options) {
@@ -350,6 +358,7 @@ class MinecraftSession {
         this.nextWakeAt = null;
         this.standby = false;
         this.waitReason = null;
+        this.waitFor = null;
         this.failures = 0;
         this.active = null;
         this.work = null;
@@ -397,6 +406,7 @@ class MinecraftSession {
                     cycle.inTool = (cycle.inTool ?? 0) + 1;
                     cycle.didWork ||= tool.idle !== true;
                     const start = this.clock.now();
+                    const physical = isBodyTool(tool, args[1]);
                     let success = false;
                     let code = 'unknown';
                     let signal, errorText, resultText;
@@ -405,7 +415,7 @@ class MinecraftSession {
                             ? AbortSignal.any([args[2], cycle.controller.signal])
                             : cycle.controller.signal;
                         let result =
-                            modelFacing && tool.body && this.options.shouldYield?.()
+                            modelFacing && physical && this.options.shouldYield?.()
                                 ? {
                                       isError: true,
                                       details: { failureCode: 'cancellation' },
@@ -442,7 +452,7 @@ class MinecraftSession {
                         metric(this.options.telemetry, {
                             tool: tool.name,
                             source: modelFacing ? 'model' : 'program',
-                            body: tool.body === true,
+                            body: physical,
                             cycleId: cycle.id,
                             args: clip(args[1] ?? {}, 500),
                             timeMs: this.clock.now() - start,
@@ -484,6 +494,7 @@ class MinecraftSession {
         if (Number.isFinite(saved?.nextWakeAt)) this.nextWakeAt = saved.nextWakeAt;
         this.standby = saved?.standby === true;
         this.waitReason = typeof saved?.waitReason === 'string' ? saved.waitReason : null;
+        this.waitFor = saved?.waitFor ?? null;
         const originalTransform = this.session.agent.transformContext?.bind(this.session.agent);
         this.session.agent.transformContext = async (messages, signal) => {
             const cycle = this.active;
@@ -597,6 +608,7 @@ class MinecraftSession {
             nextWakeAt: this.nextWakeAt,
             standby: this.standby,
             waitReason: this.waitReason,
+            waitFor: this.waitFor,
         });
     }
 
@@ -658,10 +670,11 @@ class MinecraftSession {
         return true;
     }
 
-    requestWait(untilMs, reason = null) {
+    requestWait(untilMs, reason = null, watch = null) {
         if (!Number.isFinite(untilMs)) throw new Error('Wait requires finite epoch milliseconds');
         if (!this.active) throw new Error('Wait requires active cycle');
         this.waitReason = reason;
+        this.waitFor = watch;
         this.nextWakeAt = Math.min(
             Math.max(untilMs, this.clock.now() + this.options.minWakeMs),
             this.active.wakeAt ?? Infinity,
@@ -739,6 +752,7 @@ class MinecraftSession {
         this.queue.clear();
         this.active = cycle;
         this.waitReason = null;
+        this.waitFor = null;
         this.nextWakeAt = null;
         const deadline = this.clock.setTimeout(() => this.stopCycle('budget'), this.options.maxWallMs);
         const resume = this.resume;
@@ -900,6 +914,7 @@ class MinecraftSession {
         this.paused = true;
         this.standby = false;
         this.waitReason = null;
+        this.waitFor = null;
         if (this.timer !== null) this.clock.clearTimeout(this.timer);
         this.timer = null;
         this.queue.clear();
@@ -909,7 +924,12 @@ class MinecraftSession {
     }
 
     async close({ preserveSchedule = false } = {}) {
-        const schedule = { nextWakeAt: this.nextWakeAt, standby: this.standby, waitReason: this.waitReason };
+        const schedule = {
+            nextWakeAt: this.nextWakeAt,
+            standby: this.standby,
+            waitReason: this.waitReason,
+            waitFor: this.waitFor,
+        };
         this.closed = true;
         await this.cancel();
         if (preserveSchedule) {

@@ -1672,13 +1672,14 @@ test('program calls and physical actions have distinct telemetry without losing 
 test('a concrete waiting reason persists across reconnect and clears when the next cycle starts', async () => {
     const manager = store(),
         f = await fixture({}, manager);
-    f.fake.script = async () => f.runner.requestWait(160000, 'Waiting for a shared prerequisite');
+    f.fake.script = async () => f.runner.requestWait(160000, 'Waiting for a shared prerequisite', { tasks: { 9: 7 }, checks: [] });
     f.runner.start();
     await f.clock.advance();
     assert.equal(f.runner.waitReason, 'Waiting for a shared prerequisite');
     await f.runner.close({ preserveSchedule: true });
     const resumed = await fixture({}, manager);
     assert.equal(resumed.runner.waitReason, 'Waiting for a shared prerequisite');
+    assert.deepEqual(resumed.runner.waitFor, { tasks: { 9: 7 }, checks: [] });
     resumed.runner.start();
     await resumed.clock.advance(60000);
     assert.equal(resumed.runner.waitReason, null);

@@ -2,7 +2,7 @@ import { terminalTask, workOverview } from '../comms/tasks.js';
 import { describeWorkCheck } from '../work/checks.js';
 
 // Both clients render these fields verbatim; task policy stays in the backend.
-export function workView(tasks, name, waitReason = null) {
+export function workView(tasks, name, waitReason = null, resources = []) {
     const overview = name ? workOverview(tasks, name) : null;
     const open = tasks.filter(t => !terminalTask(t));
     const summary = overview
@@ -23,6 +23,21 @@ export function workView(tasks, name, waitReason = null) {
               },
               { label: 'Blocked tasks', value: String(open.filter(t => t.state === 'blocked').length) },
           ];
+    if (resources.length)
+        summary.push({
+            label: 'Known stockpiles',
+            value: resources
+                .slice(0, 5)
+                .map(
+                    r =>
+                        `${r.dimension} (${r.location.x},${r.location.y},${r.location.z}): ${
+                            Object.entries(r.contents)
+                                .map(([item, count]) => `${count} ${item}`)
+                                .join(', ') || 'empty'
+                        } · observed by ${r.observer} at ${new Date(r.observedAt).toISOString()}`,
+                )
+                .join('; '),
+        });
     const relevant = name
         ? tasks.filter(
               t =>

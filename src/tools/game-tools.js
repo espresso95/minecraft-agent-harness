@@ -15,6 +15,7 @@ import { createContainers } from './game/containers.js';
 import { createCommunication } from './game/communication.js';
 import { createWork } from './game/work.js';
 
+export { isBodyTool } from './game/runtime.js';
 export { failureCode, withFailureCode, withFailureFacts } from './game/failures.js';
 export {
     DOORISH,

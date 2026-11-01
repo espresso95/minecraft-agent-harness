@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { readFile, mkdir, writeFile, copyFile, readdir, chmod } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, copyFile, readdir, chmod, stat } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -42,9 +42,13 @@ if (action === 'pair') {
     await writeFile(config, JSON.stringify(connection, null, 2) + '\n', { mode: 0o600 });
     await chmod(config, 0o600);
     const build = resolve('mods/companion-mailbox/build/libs');
-    const jar = (await readdir(build)).find(
+    const candidates = (await readdir(build)).filter(
         name => name.startsWith('companion-mailbox-') && name.endsWith('.jar') && !name.endsWith('-sources.jar'),
     );
+    const jars = await Promise.all(
+        candidates.map(async name => ({ name, time: (await stat(join(build, name))).mtimeMs })),
+    );
+    const jar = jars.sort((a, b) => b.time - a.time)[0]?.name;
     if (!jar) throw new Error('Build the mod first: npm run mod:build');
     await copyFile(join(build, jar), join(game, 'mods', jar));
     console.log(`Installed ${jar} and paired the controller in ${game}`);
@@ -61,7 +65,7 @@ if (action === 'up') {
     const plugins = join(state, 'server/plugins');
     await mkdir(plugins, { recursive: true });
     await copyFile(
-        resolve('mods/companion-mailbox/build/libs/companion-rules-0.1.0+1.21.6.jar'),
+        resolve('mods/companion-mailbox/build/libs/companion-rules.jar'),
         join(plugins, 'companion-rules.jar'),
     );
     if (spawnSync('colima', ['--profile', 'default', 'status'], { stdio: 'ignore' }).status !== 0) {
@@ -72,6 +76,12 @@ if (action === 'up') {
         );
         if (result.status !== 0) throw new Error('Colima failed to start');
     }
+    const discovery = spawnSync(process.execPath, ['scripts/claude-host.js', state, '--discover'], {
+        env,
+        stdio: ['ignore', 'ignore', 'pipe'],
+        timeout: 30000,
+    });
+    if (discovery.status !== 0) console.log('Claude Code is unavailable; OpenAI companions remain available.');
     docker(['build', '-q', '-f', 'Dockerfile.local', '-t', 'minecraft-companions:local', '.']);
     console.log('Saved companions join paused. Open K to manage the roster, then Start or Resume when ready.');
     console.log('Join localhost:25565 with Fabric Minecraft 1.21.6.');
@@ -99,11 +109,18 @@ const args =
 const child = spawn('docker', args, { env, stdio: 'inherit' });
 const gateway =
     action === 'up' ? spawn(process.execPath, ['scripts/local-web.js', state], { env, stdio: 'inherit' }) : null;
+const claude =
+    action === 'up'
+        ? spawn(process.execPath, ['scripts/claude-host.js', state], { env, stdio: ['ignore', 'ignore', 'pipe'] })
+        : null;
+claude?.stderr.on('data', chunk => process.stderr.write(chunk));
+claude?.on('error', error => console.error('Claude Code:', error.message));
 let stopping = false;
 function stop(signal) {
     if (stopping) return;
     stopping = true;
     gateway?.kill('SIGTERM');
+    claude?.kill('SIGTERM');
     if (action !== 'up') {
         child.kill(signal);
         return;
@@ -121,10 +138,12 @@ function stop(signal) {
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => stop(signal));
 child.once('exit', code => {
     gateway?.kill('SIGTERM');
+    claude?.kill('SIGTERM');
     process.exitCode = code ?? 1;
 });
 child.once('error', error => {
     gateway?.kill('SIGTERM');
+    claude?.kill('SIGTERM');
     console.error(error.message);
     process.exitCode = 1;
 });

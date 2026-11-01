@@ -1,16 +1,28 @@
 import { choice, coords, integer, name, object, validate } from '../tools/game/schema.js';
 
-// One registry owns each check's schema and fresh-world evaluation.
+// Definitions, validation, evaluation and descriptions share this registry.
+const quantity = properties => ({
+    anyOf: [
+        object({ ...properties, count: integer(1, 100000), comparison: choice(['at_least']) }, [
+            ...Object.keys(properties),
+            'count',
+        ]),
+        object({ ...properties, count: integer(0, 100000), comparison: choice(['equal']) }),
+    ],
+});
+const matches = (observed, check) =>
+    check.comparison === 'equal' ? observed === check.count : observed >= check.count;
+const amount = check => `${check.comparison === 'equal' ? 'exactly' : 'at least'} ${check.count} ${check.name}`;
 const kinds = {
     inventory: {
-        schema: object({ kind: choice(['inventory']), name, count: integer(0, 100000) }),
-        describe: check => `Inventory: at least ${check.count} ${check.name}`,
+        schema: quantity({ kind: choice(['inventory']), name }),
+        describe: check => `Inventory: ${amount(check)}`,
         evaluate(bot, _perception, check) {
             const observed = bot.inventory
                 .items()
                 .filter(i => i.name === check.name)
                 .reduce((n, i) => n + i.count, 0);
-            return { observed, passed: observed >= check.count };
+            return { observed, passed: matches(observed, check) };
         },
     },
     block: {
@@ -23,32 +35,37 @@ const kinds = {
             return { observed: visible ? block.name : null, passed: visible && block.name === check.name };
         },
     },
+    container: {
+        schema: quantity({ kind: choice(['container']), name, ...coords }),
+        describe: check => `Container at ${check.x}, ${check.y}, ${check.z}: ${amount(check)}`,
+        async evaluate(_bot, _perception, check, { inspectContainer, signal }) {
+            if (!inspectContainer) throw Error('Container verification requires the guarded container inspector');
+            signal?.throwIfAborted();
+            const inspected = await inspectContainer(check, signal);
+            const observed = inspected.contents[check.name] ?? 0;
+            return { observed, passed: matches(observed, check), contents: inspected.contents, chest: inspected.chest };
+        },
+    },
 };
-export function describeWorkCheck(check) {
-    return kinds[check.kind]?.describe(check) ?? `${check.kind}: ${check.name}`;
-}
 export const workChecks = {
     type: 'array',
     minItems: 0,
     maxItems: 128,
-    items: object(
-        {
-            ...Object.assign({}, ...Object.values(kinds).map(k => k.schema.properties)),
-            kind: choice(Object.keys(kinds)),
-        },
-        ['kind', 'name'],
-    ),
+    items: { anyOf: Object.values(kinds).map(k => k.schema) },
 };
-export function validateWorkChecks(checks) {
-    validate(workChecks, checks);
-    for (const check of checks) validate(kinds[check.kind].schema, check);
+export function describeWorkCheck(check) {
+    return kinds[check.kind]?.describe(check) ?? `${check.kind}: ${check.name}`;
 }
-export function verifyWork(bot, perception, task) {
+export function validateWorkChecks(checks) {
+    validate(workChecks, checks, 'checks');
+}
+export async function verifyWork(bot, perception, task, context = {}) {
     validateWorkChecks(task.checks ?? []);
-    const results = (task.checks ?? []).map(check => ({
-        ...check,
-        ...kinds[check.kind].evaluate(bot, perception, check),
-    }));
+    const results = [];
+    for (const check of task.checks ?? []) {
+        context.signal?.throwIfAborted();
+        results.push({ ...check, ...(await kinds[check.kind].evaluate(bot, perception, check, context)) });
+    }
     return {
         at: new Date().toISOString(),
         revision: task.revision,
@@ -57,4 +74,29 @@ export function verifyWork(bot, perception, task) {
         position: { ...bot.entity.position },
         inventory: bot.inventory.items().map(i => ({ name: i.name, count: i.count })),
     };
+}
+
+// These are wake hints from known observations, never completion evidence.
+export function knownChecksMet(bot, perception, checks, resources = []) {
+    return (
+        checks.length > 0 &&
+        checks.every(check => {
+            if (check.kind !== 'container') return kinds[check.kind].evaluate(bot, perception, check).passed;
+            const resource = resources.find(
+                r =>
+                    r.dimension === (bot.game?.dimension ?? 'overworld') &&
+                    ['x', 'y', 'z'].every(k => r.location[k] === check[k]),
+            );
+            return Boolean(resource && matches(resource.contents[check.name] ?? 0, check));
+        })
+    );
+}
+export function waitConditionMet(watch, tasks, checksMet) {
+    return Boolean(
+        watch &&
+        (Object.entries(watch.tasks ?? {}).some(
+            ([id, revision]) => tasks.find(t => t.id === Number(id))?.attentionRevision !== revision,
+        ) ||
+            checksMet(watch.checks ?? [])),
+    );
 }

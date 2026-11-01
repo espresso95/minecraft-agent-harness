@@ -2,8 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { decodeMessage, messageMetadata, MESSAGE_TYPES } from './messages.js';
 import {
-    TaskProjection,
-    TASK_ROWS,
+    WorkProjection,
+    WORK_ROWS,
     terminalTask,
     taskMetadata,
     validateTaskChange,
@@ -133,8 +133,9 @@ export class MailboxStore {
                 )
                     this.#db.exec("ALTER TABLE mailbox_dm ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'");
             });
-            this.#db.exec(`CREATE INDEX IF NOT EXISTS mailbox_task_events ON mailbox_dm(id) WHERE ${TASK_ROWS}`);
-            this.#tasks = new TaskProjection(this.#db);
+            this.#db.exec('DROP INDEX IF EXISTS mailbox_task_events');
+            this.#db.exec(`CREATE INDEX IF NOT EXISTS mailbox_work_events ON mailbox_dm(id) WHERE ${WORK_ROWS}`);
+            this.#tasks = new WorkProjection(this.#db);
             this.skills = new SkillStore(this.#db, this.#self);
         } catch (error) {
             this.close();
@@ -208,6 +209,34 @@ export class MailboxStore {
             /* Durable messages remain available to repair scans. */
         }
         return value;
+    }
+
+    observeContainer({ dimension, chest, contents }) {
+        if (
+            typeof dimension !== 'string' ||
+            !['x', 'y', 'z'].every(k => Number.isInteger(chest[k])) ||
+            !contents ||
+            Object.entries(contents).some(
+                ([name, count]) => !/^[a-z0-9_]+$/.test(name) || !Number.isInteger(count) || count < 0,
+            )
+        )
+            throw new TypeError('Invalid container observation');
+        const resource = { key: `${dimension}:${chest.x},${chest.y},${chest.z}`, dimension, location: chest, contents };
+        return this.#committed(
+            this.#transaction(() => {
+                const result = this.#db
+                    .prepare('INSERT INTO mailbox_dm (sender,recipient,text,createdAt,metadata) VALUES (?,?,?,?,?)')
+                    .run(
+                        this.#self,
+                        this.#self,
+                        'Container observed',
+                        Date.now(),
+                        JSON.stringify({ type: 'observation', resource }),
+                    );
+                this.#markRead([Number(result.lastInsertRowid)]);
+                return resource;
+            }),
+        );
     }
 
     sendDM(to, text, options) {
@@ -331,11 +360,14 @@ export class MailboxStore {
     }
 
     tasks() {
-        return this.#tasks.snapshot();
+        return this.#tasks.snapshot().tasks;
     }
 
+    resources() {
+        return this.#tasks.snapshot().resources;
+    }
     work() {
-        return workOverview(this.tasks(), this.#self);
+        return { ...workOverview(this.tasks(), this.#self), resources: this.resources().slice(0, 12) };
     }
 
     taskSource(messageId) {
@@ -564,7 +596,7 @@ export class MailboxStore {
                 .prepare(
                     `
                 SELECT d.* FROM mailbox_dm d
-                WHERE ${where}${peerFilter} ORDER BY d.id LIMIT ?
+                WHERE (${where}) AND COALESCE(json_extract(d.metadata, '$.type'),'message') != 'observation'${peerFilter} ORDER BY d.id LIMIT ?
             `,
                 )
                 .all(...params, limit + 1);
@@ -641,15 +673,18 @@ export class MailboxObserver {
     constructor(file) {
         this.#db = new DatabaseSync(file, { readOnly: true });
         this.#db.exec('PRAGMA busy_timeout = 3000');
-        this.#tasks = new TaskProjection(this.#db);
+        this.#tasks = new WorkProjection(this.#db);
     }
     tasks() {
-        return this.#tasks.snapshot();
+        return this.#tasks.snapshot().tasks;
+    }
+    resources() {
+        return this.#tasks.snapshot().resources;
     }
     work(name) {
-        return workOverview(this.tasks(), name);
+        return { ...workOverview(this.tasks(), name), resources: this.resources().slice(0, 12) };
     }
-    taskRevision() {
+    workRevision() {
         this.tasks();
         return this.#tasks.revision;
     }
@@ -694,7 +729,10 @@ export class MailboxObserver {
             throw new TypeError('Invalid message cursor or agent filter');
         const names = [...new Set(agents.map(validName))];
         const conversation = '(d.sender IN (SELECT name FROM agents) AND d.recipient IN (SELECT name FROM agents))';
-        const where = ["NOT (d.sender = d.recipient AND json_type(d.metadata, '$.task') IS NOT NULL)"],
+        const where = [
+                "NOT (d.sender = d.recipient AND json_type(d.metadata, '$.task') IS NOT NULL)",
+                "COALESCE(json_extract(d.metadata, '$.type'),'message') != 'observation'",
+            ],
             params = [];
         if (agentsOnly) where.push(conversation);
         if (after !== undefined) {

@@ -10,10 +10,10 @@ export const TASK_UPDATES = Object.freeze({
     revised: null,
 });
 export const terminalTask = task => ['completed', 'cancelled'].includes(task?.state);
-export const TASK_ROWS =
-    "json_extract(metadata, '$.type') = 'request' OR json_extract(metadata, '$.taskId') IS NOT NULL";
+export const WORK_ROWS =
+    "json_extract(metadata, '$.type') = 'request' OR json_extract(metadata, '$.taskId') IS NOT NULL OR json_extract(metadata, '$.type') = 'observation'";
 
-export class TaskProjection {
+export class WorkProjection {
     constructor(db) {
         this.db = db;
     }
@@ -22,18 +22,28 @@ export class TaskProjection {
     }
     snapshot() {
         const revision = this.db
-            .prepare(`SELECT COALESCE(MAX(id), 0) AS id FROM mailbox_dm WHERE ${TASK_ROWS}`)
+            .prepare(`SELECT COALESCE(MAX(id), 0) AS id FROM mailbox_dm WHERE ${WORK_ROWS}`)
             .get().id;
         if (revision !== this.revision) {
-            this.tasks = projectTasks(
-                this.db
-                    .prepare(`SELECT * FROM mailbox_dm WHERE ${TASK_ROWS} ORDER BY id`)
-                    .all()
-                    .map(({ metadata, ...row }) => ({ ...row, ...JSON.parse(metadata) })),
-            );
+            const rows = this.db
+                .prepare(`SELECT * FROM mailbox_dm WHERE ${WORK_ROWS} ORDER BY id`)
+                .all()
+                .map(({ metadata, ...row }) => ({ ...row, ...JSON.parse(metadata) }));
+            const resources = new Map();
+            for (const row of rows)
+                if (row.type === 'observation')
+                    resources.set(row.resource.key, {
+                        ...row.resource,
+                        observer: row.sender,
+                        observedAt: row.createdAt,
+                    });
+            this.value = {
+                tasks: projectTasks(rows.filter(row => row.type !== 'observation')),
+                resources: [...resources.values()].sort((a, b) => b.observedAt - a.observedAt),
+            };
             this.revision = revision;
         }
-        return structuredClone(this.tasks ?? []);
+        return structuredClone(this.value ?? { tasks: [], resources: [] });
     }
 }
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
@@ -150,7 +160,13 @@ export function workOverview(tasks, self) {
     const open = tasks.filter(t => !terminalTask(t));
     const current = open.filter(t => same(t.owner, self));
     const ready = open.filter(t => eligibleTask(t, self)).sort((a, b) => b.priority - a.priority || a.id - b.id);
-    const blocked = open.filter(t => t.state === 'blocked' && (t.shared || same(t.assignedTo, self)));
+    const blocked = open.filter(
+        t => t.state === 'blocked' && [t.owner, t.assignedTo, t.creator].some(n => same(n, self)),
+    );
+    const readyForVerification = t => {
+        const children = tasks.filter(child => child.goalId === t.id);
+        return t.kind === 'goal' && children.length > 0 && children.every(terminalTask);
+    };
     const brief = t => ({
         id: t.id,
         goalId: t.goalId ?? null,
@@ -158,6 +174,11 @@ export function workOverview(tasks, self) {
         state: t.state,
         owner: t.owner,
         revision: t.revision,
+        attentionRevision: t.attentionRevision,
+        ...(same(t.owner, self) || t.kind === 'goal'
+            ? { scope: t.scope, checks: t.checks, dependencies: t.dependencies }
+            : {}),
+        ...(readyForVerification(t) ? { readyForVerification: true } : {}),
         ...(t.blocker ? { blocker: t.blocker } : {}),
         ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}),
     });
@@ -182,13 +203,15 @@ export function workOverview(tasks, self) {
               ? 'Ready work available'
               : blocked.length
                 ? 'Work is blocked; inspect blockers or revise the plan'
-                : open.some(t => t.kind === 'goal')
-                  ? 'Active goal has no ready work; review dependencies or propose the next task'
-                  : 'No active shared goal or assigned work',
+                : open.some(readyForVerification)
+                  ? 'All planned tasks are closed; verify the goal in the world and close it or plan remaining work'
+                  : open.some(t => t.kind === 'goal')
+                    ? 'Active goal has no ready work; review dependencies or propose the next task'
+                    : 'No active shared goal or assigned work',
     };
 }
 
-export function validateTaskChange(tasks, task, type, actor, patch = {}) {
+export function authorizeTaskChange(tasks, task, type, actor, patch = {}) {
     if (!task) throw new TypeError('Unknown task ID; ordinary message IDs are not task IDs');
     if (terminalTask(task)) throw new TypeError('This task is already closed; create a new request for new work');
     if (!task.shared && !same(actor, task.creator) && !same(actor, task.recipient))
@@ -224,13 +247,17 @@ export function validateTaskChange(tasks, task, type, actor, patch = {}) {
         tasks.some(t => t.goalId === task.id && t.state !== 'completed' && t.state !== 'cancelled')
     )
         throw new TypeError('Finish or cancel the goal tasks first');
+    validateDependencies(tasks, task.id, patch.dependencies ?? task.dependencies, task.goalId);
+}
+
+export function validateTaskChange(tasks, task, type, actor, patch = {}) {
+    authorizeTaskChange(tasks, task, type, actor, patch);
     if (
         type === 'completed' &&
-        task.checks?.length &&
+        (patch.checks ?? task.checks)?.length &&
         (!patch.verification?.passed || patch.verification.revision !== task.revision)
     )
         throw new TypeError('Use work_update to verify the current completion checks before completing this task');
-    validateDependencies(tasks, task.id, patch.dependencies ?? task.dependencies, task.goalId);
 }
 
 export function validateDependencies(tasks, id, dependencies, goalId) {

@@ -63,6 +63,14 @@ test('native completion checks observe the world and inventory; failed or invisi
     assert.equal(hidden.completed, false);
     assert.equal(hidden.verification.checks[0].observed, null);
     visible = true;
+    const revisedCheck = await call('work_update', {
+        taskId: task.id,
+        revision: task.revision,
+        state: 'completed',
+        note: 'Check the submitted definition',
+        checks: [{ kind: 'inventory', name: 'oak_log', count: 3 }],
+    });
+    assert.equal(revisedCheck.completed, false);
     const done = await attempt();
     assert.equal(done.state, 'completed');
     assert.equal(done.verification.passed, true);

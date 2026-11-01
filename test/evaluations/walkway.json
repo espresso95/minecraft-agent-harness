@@ -1,0 +1,19 @@
+{
+  "objective": "In this peaceful survival test world, build a small raised oak walkway and supply point. Start with empty inventories and gather/craft everything. Stay inside the glass boundary and preserve existing builds. Place five oak-plank blocks at x=-8 through -4, y=65, z=8. Place a chest at (-3,65,8), deposit at least eight sticks and two raw oak logs, then independently inspect and verify the walkway and chest. Choose your own plan and useful batches. If finished early, verify the result and wait; do not add optional structures.",
+  "blockChecks": [
+    { "label": "Oak walkway", "name": "oak_planks", "boxes": [{ "from": [-8, 65, 8], "to": [-4, 65, 8] }] },
+    { "label": "Supply chest", "name": "chest", "positions": [[-3, 65, 8]] }
+  ],
+  "containers": [
+    {
+      "label": "Supplies",
+      "name": "chest",
+      "at": [-3, 65, 8],
+      "items": [
+        { "name": "stick", "minimum": 8 },
+        { "name": "oak_log", "minimum": 2 }
+      ]
+    }
+  ],
+  "inventoryChecks": []
+}

@@ -28,7 +28,15 @@ function parameterSchema(schema, depth = 0) {
 }
 const quote = s => `'${String(s).replaceAll("'", "'\\''")}'`;
 
-export function createSkillTools({ store, workspaceRead, runShell, bot, perception, toolList = () => [] }) {
+export function createSkillTools({
+    store,
+    workspaceRead,
+    runShell,
+    bot,
+    perception,
+    inspectContainer,
+    toolList = () => [],
+}) {
     let contractHash;
     const contract = () =>
         (contractHash ??= createHash('sha256')
@@ -141,9 +149,21 @@ export function createSkillTools({ store, workspaceRead, runShell, bot, percepti
                     { cmd, ...(a.timeoutSec ? { timeoutSec: a.timeoutSec } : {}) },
                     signal,
                 );
-                const verification = verifyWork(bot, perception, { revision: skill.id, checks: a.checks ?? [] });
-                verification.contract = contract();
                 const success = !execution.isError && !signal?.aborted;
+                const verification = success
+                    ? await verifyWork(
+                          bot,
+                          perception,
+                          { revision: skill.id, checks: a.checks ?? [] },
+                          { inspectContainer, signal },
+                      )
+                    : {
+                          at: new Date().toISOString(),
+                          passed: false,
+                          checks: [],
+                          reason: 'Program did not finish; completion checks were not run',
+                      };
+                verification.contract = contract();
                 const { source: _source, ...metadata } = store.record(skill.id, success, verification, contract());
                 return {
                     ...result({ skill: metadata, execution: execution.content, verification }),

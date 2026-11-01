@@ -1,3 +1,5 @@
+import { workChecks } from '../work/checks.js';
+import { validate, object, integer as integerSchema } from './game/schema.js';
 import * as fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
@@ -5,6 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+
+const waitUntil = object(
+    {
+        tasks: { type: 'array', maxItems: 32, items: integerSchema(1, Number.MAX_SAFE_INTEGER) },
+        checks: { ...workChecks, maxItems: 8 },
+    },
+    [],
+);
 
 const DEFAULTS = Object.freeze({
     fileBytes: 256 * 1024,
@@ -518,11 +528,15 @@ export async function createWorkspaceTools({
                     {
                         seconds: { type: 'number', exclusiveMinimum: 0, maximum: limits.maxWaitMs / 1000 },
                         reason: { type: 'string', minLength: 1, maxLength: 500 },
+                        until: waitUntil,
                     },
                     ['seconds'],
                 ),
                 async (args, signal) => {
-                    assertArgs(args, ['seconds'], ['reason']);
+                    assertArgs(args, ['seconds'], ['reason', 'until']);
+                    if (args.until !== undefined) {
+                        validate(waitUntil, args.until, 'until');
+                    }
                     if (
                         args.reason !== undefined &&
                         (typeof args.reason !== 'string' || !args.reason.trim() || args.reason.length > 500)
@@ -537,7 +551,7 @@ export async function createWorkspaceTools({
                         fail('Invalid wait duration.');
                     checkAbort(signal);
                     const deadlineMs = now() + Math.ceil(args.seconds * 1000);
-                    const decision = await onWait(deadlineMs, args.reason);
+                    const decision = await onWait(deadlineMs, args.reason, args.until);
                     return decision && typeof decision === 'object' ? decision : { requestedIdleUntil: deadlineMs };
                 },
                 { idle: true },

@@ -554,3 +554,7 @@ export function createActionRunner(
     };
     return runner;
 }
+
+export function isBodyTool(tool, args) {
+    return typeof tool.body === 'function' ? tool.body(args) : tool.body === true;
+}

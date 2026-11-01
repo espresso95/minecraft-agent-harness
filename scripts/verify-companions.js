@@ -57,7 +57,7 @@ const plugin = join(root, 'server/plugins/CompanionRules');
 await mkdir(plugin, { recursive: true });
 await writeFile(join(plugin, 'config.yml'), 'permanent-death: false\n');
 await copyFile(
-    'mods/companion-mailbox/build/libs/companion-rules-0.1.0+1.21.6.jar',
+    'mods/companion-mailbox/build/libs/companion-rules.jar',
     join(root, 'server/plugins/companion-rules.jar'),
 );
 await prepareServer(join(root, 'server'));

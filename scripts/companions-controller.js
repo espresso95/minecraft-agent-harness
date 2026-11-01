@@ -26,7 +26,7 @@ const controller = await createCompanionController({
         ),
         serverRules,
     }),
-    catalog: await connectedModelCatalog(authFile),
+    catalog: await connectedModelCatalog(authFile, resolve(stateDir, '../claude-models.json')),
 });
 console.log(`Companions controller listening locally on ${controller.endpoint}`);
 console.log('Pair the Minecraft mod with npm run companions:pair. Press K in your local world.');

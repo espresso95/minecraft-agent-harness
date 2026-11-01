@@ -36,6 +36,10 @@ export function createContainers(ctx) {
     );
     const STORES = ['chest', 'trapped_chest', 'barrel'];
     const contentsOf = items => items.reduce((m, i) => ({ ...m, [i.name]: (m[i.name] ?? 0) + i.count }), {});
+    function observed(active, chest, contents) {
+        ctx.mailbox?.observeContainer?.({ dimension: active.game?.dimension ?? 'overworld', chest, contents });
+        return contents;
+    }
     async function openStore(active, a, signal) {
         let block;
         if ([a.x, a.y, a.z].every(Number.isFinite)) {
@@ -59,6 +63,23 @@ export function createContainers(ctx) {
         return { window: await untilAbort(active.openContainer(block), signal), where: xyz(block) };
     }
     const optionalAt = { x: coords.x, y: coords.y, z: coords.z };
+    async function inspectStore(active, args, signal) {
+        const { window, where } = await openStore(active, args, signal);
+        try {
+            return { chest: where, contents: observed(active, where, contentsOf(window.containerItems())) };
+        } finally {
+            try {
+                window.close();
+            } catch {}
+        }
+    }
+    add(
+        'inspect_container',
+        'Inspect the fresh contents of a chest or barrel through ordinary movement and reach. Returns its coordinates and item counts, then closes it.',
+        coords,
+        (args, { bot: active, signal }) => inspectStore(active, args, signal),
+        body,
+    );
     add(
         'deposit',
         'Put items into a chest or barrel by name. Uses the given x,y,z, or the nearest chest/barrel within 24 blocks (walks to it). count omitted = all you carry. Returns what went in and the chest contents. Good for a shared stockpile.',
@@ -85,14 +106,14 @@ export function createContainers(ctx) {
                     throw failWith(
                         'action_failed',
                         `Could not deposit ${a.item}: ${full}. The chest is probably full.`,
-                        { chest: where, contents: contentsOf(window.containerItems()) },
+                        { chest: where, contents: observed(active, where, contentsOf(window.containerItems())) },
                     );
                 return {
                     deposited: moved,
                     item: a.item,
                     chest: where,
                     ...(moved < want ? { note: `only ${moved} of ${want} fit (${full ?? 'chest full'})` } : {}),
-                    contents: contentsOf(window.containerItems()),
+                    contents: observed(active, where, contentsOf(window.containerItems())),
                 };
             } finally {
                 try {
@@ -132,7 +153,7 @@ export function createContainers(ctx) {
                     if (signal?.aborted || error?.name === 'AbortError') throw error;
                     full = String(error?.message ?? error).slice(0, 80);
                 }
-                const after = contentsOf(window.containerItems());
+                const after = observed(active, where, contentsOf(window.containerItems()));
                 const left = after[a.item] ?? 0;
                 const got = Math.max(available - left, invCount(active, a.item) - before);
                 const freeSlots =
@@ -164,4 +185,5 @@ export function createContainers(ctx) {
         },
         { ...body, required: ['item'] },
     );
+    return { inspectStore };
 }

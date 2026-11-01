@@ -1,8 +1,8 @@
 import { messagePolicy } from './messages.js';
 
 export class AgentInbox {
-    constructor({ store, peers, getRunner, actions, record = () => {} }) {
-        Object.assign(this, { store, peers, getRunner, actions, record });
+    constructor({ store, peers, getRunner, actions, checkWait = () => false, record = () => {} }) {
+        Object.assign(this, { store, peers, getRunner, actions, checkWait, record });
         this.cursor = 0;
         this.offered = new Set();
         this.inFlight = [];
@@ -56,8 +56,24 @@ export class AgentInbox {
     notifyWork() {
         if (!this.store.work) return;
         const work = this.store.work();
+        const runner = this.getRunner();
+        if (runner?.waitFor) {
+            if (this.checkWait(runner.waitFor))
+                runner.enqueue(
+                    {
+                        kind: 'work',
+                        text: 'Your waiting condition changed or is satisfied. Inspect fresh observations and resume useful work.',
+                    },
+                    { key: 'condition', urgent: true, interrupt: false, wakeWhenIdle: true },
+                );
+            return;
+        }
         const initial = this.readySignature === undefined;
-        const signature = JSON.stringify([work.attentionRevision, work.ready.map(t => [t.id, t.revision])]);
+        const signature = JSON.stringify([
+            work.attentionRevision,
+            work.ready.map(t => [t.id, t.revision]),
+            work.resources?.map(r => [r.key, r.contents]),
+        ]);
         if (signature === this.readySignature) return;
         this.readySignature = signature;
         if (!work.readyCount && (initial || !work.attentionRevision)) return;

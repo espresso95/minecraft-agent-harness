@@ -1,3 +1,4 @@
+import { registerClaudeCode } from './model/claude-code.js';
 import { compactResult } from './model/session.js';
 import { findModel } from './model/extra-models.js';
 import { subscriptionProblem } from './model/auth.js';
@@ -29,8 +30,8 @@ export function keyEnvFor(provider) {
     );
 }
 
-export async function checkModel(config, { sdk } = {}) {
-    if (config.model.baseUrl && !config.subscriptionOnly) {
+export async function checkModel(config, { sdk, modelRequest } = {}) {
+    if (config.model.baseUrl && !config.subscriptionOnly && config.model.provider !== 'claude-code') {
         if (!config.apiKey && !process.env.MODEL_API_KEY)
             return `--base-url needs a key: set MODEL_API_KEY in .env or the environment.`;
         return null;
@@ -42,9 +43,16 @@ export async function checkModel(config, { sdk } = {}) {
         allowModelNetwork: false,
     });
     const { provider, id } = config.model;
-    if (config.subscriptionOnly) {
+    if (config.subscriptionOnly || provider === 'claude-code') {
         const problem = subscriptionProblem(runtime, config.model, config.apiKey);
         if (problem) return problem;
+    }
+    if (provider === 'claude-code') {
+        try {
+            await registerClaudeCode(runtime, modelRequest);
+        } catch (error) {
+            return error.message;
+        }
     }
     if (!runtime.getProviders().some(p => p.id === provider))
         return `Unknown provider "${provider}". Run "minecraft-agent models" to see providers with keys set, or "minecraft-agent models --all".`;

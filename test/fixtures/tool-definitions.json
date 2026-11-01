@@ -1251,6 +1251,42 @@
         ],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "inspect_container",
+      "label": "inspect container",
+      "description": "Inspect the fresh contents of a chest or barrel through ordinary movement and reach. Returns its coordinates and item counts, then closes it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": -29999999,
+            "maximum": 29999999
+          },
+          "y": {
+            "type": "integer",
+            "minimum": -64,
+            "maximum": 319
+          },
+          "z": {
+            "type": "integer",
+            "minimum": -29999999,
+            "maximum": 29999999
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "z"
+        ],
+        "additionalProperties": false
+      }
     }
   ],
   "creative": [
@@ -2541,6 +2577,42 @@
         },
         "required": [
           "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "inspect_container",
+      "label": "inspect container",
+      "description": "Inspect the fresh contents of a chest or barrel through ordinary movement and reach. Returns its coordinates and item counts, then closes it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": -29999999,
+            "maximum": 29999999
+          },
+          "y": {
+            "type": "integer",
+            "minimum": -64,
+            "maximum": 319
+          },
+          "z": {
+            "type": "integer",
+            "minimum": -29999999,
+            "maximum": 29999999
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "z"
         ],
         "additionalProperties": false
       }
@@ -3867,47 +3939,230 @@
             "minItems": 0,
             "maxItems": 128,
             "items": {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "enum": [
-                    "inventory",
-                    "block"
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "inventory"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "at_least"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "count"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "inventory"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "equal"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "count",
+                        "comparison"
+                      ],
+                      "additionalProperties": false
+                    }
                   ]
                 },
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 64,
-                  "pattern": "^[a-z0-9_]+$"
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "block"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_]+$"
+                    },
+                    "x": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
                 },
-                "count": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 100000
-                },
-                "x": {
-                  "type": "integer",
-                  "minimum": -29999999,
-                  "maximum": 29999999
-                },
-                "y": {
-                  "type": "integer",
-                  "minimum": -64,
-                  "maximum": 319
-                },
-                "z": {
-                  "type": "integer",
-                  "minimum": -29999999,
-                  "maximum": 29999999
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "x": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": -64,
+                          "maximum": 319
+                        },
+                        "z": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "at_least"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "z",
+                        "count"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "x": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": -64,
+                          "maximum": 319
+                        },
+                        "z": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "equal"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "z",
+                        "count",
+                        "comparison"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
-              },
-              "required": [
-                "kind",
-                "name"
-              ],
-              "additionalProperties": false
+              ]
             }
           },
           "tasks": {
@@ -3966,47 +4221,230 @@
                   "minItems": 0,
                   "maxItems": 128,
                   "items": {
-                    "type": "object",
-                    "properties": {
-                      "kind": {
-                        "type": "string",
-                        "enum": [
-                          "inventory",
-                          "block"
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "inventory"
+                                ]
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64,
+                                "pattern": "^[a-z0-9_]+$"
+                              },
+                              "count": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 100000
+                              },
+                              "comparison": {
+                                "type": "string",
+                                "enum": [
+                                  "at_least"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "name",
+                              "count"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "inventory"
+                                ]
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64,
+                                "pattern": "^[a-z0-9_]+$"
+                              },
+                              "count": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 100000
+                              },
+                              "comparison": {
+                                "type": "string",
+                                "enum": [
+                                  "equal"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "name",
+                              "count",
+                              "comparison"
+                            ],
+                            "additionalProperties": false
+                          }
                         ]
                       },
-                      "name": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 64,
-                        "pattern": "^[a-z0-9_]+$"
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "block"
+                            ]
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64,
+                            "pattern": "^[a-z0-9_]+$"
+                          },
+                          "x": {
+                            "type": "integer",
+                            "minimum": -29999999,
+                            "maximum": 29999999
+                          },
+                          "y": {
+                            "type": "integer",
+                            "minimum": -64,
+                            "maximum": 319
+                          },
+                          "z": {
+                            "type": "integer",
+                            "minimum": -29999999,
+                            "maximum": 29999999
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "name",
+                          "x",
+                          "y",
+                          "z"
+                        ],
+                        "additionalProperties": false
                       },
-                      "count": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 100000
-                      },
-                      "x": {
-                        "type": "integer",
-                        "minimum": -29999999,
-                        "maximum": 29999999
-                      },
-                      "y": {
-                        "type": "integer",
-                        "minimum": -64,
-                        "maximum": 319
-                      },
-                      "z": {
-                        "type": "integer",
-                        "minimum": -29999999,
-                        "maximum": 29999999
+                      {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "container"
+                                ]
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64,
+                                "pattern": "^[a-z0-9_]+$"
+                              },
+                              "x": {
+                                "type": "integer",
+                                "minimum": -29999999,
+                                "maximum": 29999999
+                              },
+                              "y": {
+                                "type": "integer",
+                                "minimum": -64,
+                                "maximum": 319
+                              },
+                              "z": {
+                                "type": "integer",
+                                "minimum": -29999999,
+                                "maximum": 29999999
+                              },
+                              "count": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 100000
+                              },
+                              "comparison": {
+                                "type": "string",
+                                "enum": [
+                                  "at_least"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "name",
+                              "x",
+                              "y",
+                              "z",
+                              "count"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "container"
+                                ]
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64,
+                                "pattern": "^[a-z0-9_]+$"
+                              },
+                              "x": {
+                                "type": "integer",
+                                "minimum": -29999999,
+                                "maximum": 29999999
+                              },
+                              "y": {
+                                "type": "integer",
+                                "minimum": -64,
+                                "maximum": 319
+                              },
+                              "z": {
+                                "type": "integer",
+                                "minimum": -29999999,
+                                "maximum": 29999999
+                              },
+                              "count": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 100000
+                              },
+                              "comparison": {
+                                "type": "string",
+                                "enum": [
+                                  "equal"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "name",
+                              "x",
+                              "y",
+                              "z",
+                              "count",
+                              "comparison"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
                       }
-                    },
-                    "required": [
-                      "kind",
-                      "name"
-                    ],
-                    "additionalProperties": false
+                    ]
                   }
                 },
                 "priority": {
@@ -4160,53 +4598,241 @@
             "minItems": 0,
             "maxItems": 128,
             "items": {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "enum": [
-                    "inventory",
-                    "block"
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "inventory"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "at_least"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "count"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "inventory"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "equal"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "count",
+                        "comparison"
+                      ],
+                      "additionalProperties": false
+                    }
                   ]
                 },
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 64,
-                  "pattern": "^[a-z0-9_]+$"
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "block"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_]+$"
+                    },
+                    "x": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": -64,
+                      "maximum": 319
+                    },
+                    "z": {
+                      "type": "integer",
+                      "minimum": -29999999,
+                      "maximum": 29999999
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
                 },
-                "count": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 100000
-                },
-                "x": {
-                  "type": "integer",
-                  "minimum": -29999999,
-                  "maximum": 29999999
-                },
-                "y": {
-                  "type": "integer",
-                  "minimum": -64,
-                  "maximum": 319
-                },
-                "z": {
-                  "type": "integer",
-                  "minimum": -29999999,
-                  "maximum": 29999999
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "x": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": -64,
+                          "maximum": 319
+                        },
+                        "z": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "at_least"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "z",
+                        "count"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_]+$"
+                        },
+                        "x": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": -64,
+                          "maximum": 319
+                        },
+                        "z": {
+                          "type": "integer",
+                          "minimum": -29999999,
+                          "maximum": 29999999
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "comparison": {
+                          "type": "string",
+                          "enum": [
+                            "equal"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "z",
+                        "count",
+                        "comparison"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
-              },
-              "required": [
-                "kind",
-                "name"
-              ],
-              "additionalProperties": false
+              ]
             }
           },
           "priority": {
             "type": "integer",
             "minimum": -100,
             "maximum": 100
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
           }
         },
         "required": [
@@ -4354,6 +4980,42 @@
         },
         "required": [
           "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "inspect_container",
+      "label": "inspect container",
+      "description": "Inspect the fresh contents of a chest or barrel through ordinary movement and reach. Returns its coordinates and item counts, then closes it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": -29999999,
+            "maximum": 29999999
+          },
+          "y": {
+            "type": "integer",
+            "minimum": -64,
+            "maximum": 319
+          },
+          "z": {
+            "type": "integer",
+            "minimum": -29999999,
+            "maximum": 29999999
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "z"
         ],
         "additionalProperties": false
       }

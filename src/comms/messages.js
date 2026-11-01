@@ -2,6 +2,7 @@ import { TASK_UPDATES, taskMetadata } from './tasks.js';
 
 export const MESSAGE_TYPES = Object.freeze({
     message: { wake: true },
+    observation: { wake: false },
     request: { wake: true },
     ...Object.fromEntries(
         Object.keys(TASK_UPDATES).map(type => [
@@ -26,6 +27,7 @@ export function messageMetadata(value = {}) {
     const { type = 'message', taskId, urgent = false, task } = value;
     if (
         !Object.hasOwn(MESSAGE_TYPES, type) ||
+        type === 'observation' ||
         typeof urgent !== 'boolean' ||
         (taskId !== undefined && (!Number.isSafeInteger(taskId) || taskId < 1))
     )

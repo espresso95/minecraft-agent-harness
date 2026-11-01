@@ -27,6 +27,7 @@ export class ManagedAgents {
         ledger,
         session,
         spawnWorker = spawn,
+        hostModels,
         worldRules = () => null,
         onMailboxCommit = () => {},
         onWorkerStop = () => {},
@@ -39,6 +40,7 @@ export class ManagedAgents {
             ledger,
             session,
             spawnWorker,
+            hostModels,
             worldRules,
             onMailboxCommit,
             onWorkerStop,
@@ -151,11 +153,14 @@ export class ManagedAgents {
         );
         entry.child = child;
         let workerError;
+        const modelRequests = new Map();
         entry.exited = new Promise(resolveExit => {
             let ended = false;
             const finish = (code, error) => {
                 if (ended) return;
                 ended = true;
+                for (const request of modelRequests.values()) request.abort();
+                modelRequests.clear();
                 this.ingest(entry);
                 this.ledger.finishRun(run);
                 for (const pending of entry.pending.values()) pending.reject(new Error('Agent disconnected'));
@@ -197,6 +202,26 @@ export class ManagedAgents {
         for (const stream of [child.stdout, child.stderr])
             stream?.on('data', chunk => appendFileSync(entry.logFile, chunk, { mode: 0o600 }));
         child.on('message', message => {
+            if (entry.child !== child) return;
+            if (message?.type === 'model_cancel') modelRequests.get(message.id)?.abort();
+            if (message?.type === 'model_request') {
+                const abort = new AbortController();
+                modelRequests.set(message.id, abort);
+                void (async () => {
+                    try {
+                        if (!this.hostModels || !['catalog', 'complete'].includes(message.method))
+                            throw Error('Host model unavailable');
+                        const result = await this.hostModels.request(message.method, message.params, abort.signal);
+                        if (entry.child === child && child.connected)
+                            child.send({ type: 'model_result', id: message.id, result }, () => {});
+                    } catch (error) {
+                        if (entry.child === child && child.connected)
+                            child.send({ type: 'model_result', id: message.id, error: error.message }, () => {});
+                    } finally {
+                        modelRequests.delete(message.id);
+                    }
+                })();
+            }
             if (message?.type === 'companion_stopping' && entry.child === child && typeof message.message === 'string')
                 workerError = message.message.slice(0, 500);
             if (message?.type === 'mailbox_committed' && entry.child === child) this.onMailboxCommit();

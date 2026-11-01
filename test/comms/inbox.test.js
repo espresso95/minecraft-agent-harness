@@ -204,3 +204,20 @@ test('shared ready work wakes an idle peer once; working checkpoints stay passiv
     assert.equal(f.events.length, afterClaim);
     assert.equal(f.inbox.shouldYield(), false);
 });
+
+test('conditional waiting ignores unrelated work, wakes on its condition and still receives human instructions', t => {
+    const f = fixture(t);
+    const runner = { waitFor: { tasks: { 1: 2 } }, enqueue: (event, options) => f.events.push({ event, options }) };
+    f.inbox.getRunner = () => runner;
+    let met = false;
+    f.inbox.checkWait = () => met;
+    f.inbox.notifyWork();
+    assert.equal(f.events.length, 0);
+    f.store.receiveDM('Human', 'Come here');
+    f.inbox.notify();
+    assert.equal(f.events[0].options.urgent, true);
+    met = true;
+    f.inbox.notifyWork();
+    assert.equal(f.events.at(-1).event.kind, 'work');
+    assert.equal(f.events.at(-1).options.interrupt, false);
+});

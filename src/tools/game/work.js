@@ -1,3 +1,4 @@
+import { authorizeTaskChange } from '../../comms/tasks.js';
 import { choice, integer, object, peer, text } from './schema.js';
 import { workChecks, verifyWork } from '../../work/checks.js';
 import { taskView, taskReceipt } from '../../work/task-view.js';
@@ -7,7 +8,8 @@ const dependencies = { type: 'array', items: id, minItems: 0, maxItems: 64 };
 const checks = workChecks;
 const definition = { dependencies, assignedTo: peer, scope: text(2000, 0), checks, priority: integer(-100, 100) };
 
-export function createWork({ add, bot, mailbox, peers, perception, runner }) {
+export function createWork(ctx) {
+    const { add, bot, mailbox, peers, perception, runner } = ctx;
     if (!mailbox) return;
     const visible = () =>
         mailbox
@@ -105,7 +107,7 @@ export function createWork({ add, bot, mailbox, peers, perception, runner }) {
             title: text(2000),
             ...definition,
         },
-        a => {
+        async (a, { bot: active, signal }) => {
             const { taskId, ...update } = a;
             const task = visible().find(t => t.id === taskId);
             if (!task) throw new Error('Unknown or private task');
@@ -119,15 +121,31 @@ export function createWork({ add, bot, mailbox, peers, perception, runner }) {
             if (a.state === 'ready' && task.owner && runner.status.active)
                 throw new Error('Stop the active body action before releasing your claim');
             if (a.state === 'completed' && task.state !== 'completed') {
-                if (!(task.checks?.length || a.evidence?.trim()))
+                if (a.revision !== task.revision)
+                    throw new Error('Task changed; read the current revision before acting');
+                authorizeTaskChange(mailbox.tasks(), task, 'completed', bot.username, update);
+                if (!((a.checks ?? task.checks)?.length || a.evidence?.trim()))
                     throw new Error('Give completion evidence or define observable checks');
-                update.verification = verifyWork(bot, perception, task);
+                update.verification = await verifyWork(
+                    active,
+                    perception,
+                    { ...task, checks: a.checks ?? task.checks },
+                    {
+                        signal,
+                        inspectContainer: check => ctx.inspectStore(active, check, signal),
+                    },
+                );
                 if (update.verification.passed === false)
                     return { completed: false, verification: update.verification, task: taskReceipt(task) };
             }
             return taskReceipt(mailbox.updateTask(taskId, update));
         },
         {
+            body: a =>
+                a.state === 'completed' &&
+                Boolean(
+                    (a.checks ?? visible().find(t => t.id === a.taskId)?.checks)?.some(c => c.kind === 'container'),
+                ),
             required: ['taskId', 'revision', 'state', 'note'],
             allowDuringYield: a =>
                 a.state === 'checkpoint' &&

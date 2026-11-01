@@ -1,3 +1,4 @@
+import { HostModels } from './host-models.js';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
@@ -41,19 +42,20 @@ export async function createCompanionController({
     chmodSync(tokenFile, 0o600);
     const session = randomUUID();
     let ledger, observer, manager, server, poll;
+    const hostModels = new HostModels();
     try {
         ledger = new UsageLedger(join(root, 'usage.sqlite'));
         const mailboxFile = join(stateDir, 'shared/mailbox.sqlite');
         new MailboxStore(mailboxFile, 'Controller').close();
         observer = new MailboxObserver(mailboxFile);
-        let taskRevision = observer.taskRevision();
+        let workRevision = observer.workRevision();
         const routeMailbox = () => {
             if (!manager) return;
             try {
-                const revision = observer.taskRevision();
+                const revision = observer.workRevision();
                 const recipients = observer.unreadRecipients();
-                if (revision !== taskRevision) recipients.push(...manager.entries.keys());
-                taskRevision = revision;
+                if (revision !== workRevision) recipients.push(...manager.entries.keys());
+                workRevision = revision;
                 manager.notifyMailbox([...new Set(recipients)]);
             } catch (error) {
                 console.error('Mailbox notification delayed:', error.message);
@@ -75,6 +77,7 @@ export async function createCompanionController({
                 }) ??
                 new ManagedAgents({
                     agents: configs,
+                    hostModels,
                     stateDir,
                     authFile,
                     host: mcHost,
@@ -156,16 +159,18 @@ export async function createCompanionController({
                 if (req.method === 'GET' && url.pathname === '/v1/models') return json(res, 200, catalog.snapshot());
                 if (req.method === 'GET' && url.pathname === '/v1/state') {
                     const tasks = observer.tasks();
-                    const snapshot = roster
-                        .snapshot()
-                        .map(agent => ({ ...agent, work: workView(tasks, agent.name, agent.runtime?.waitReason) }));
+                    const snapshot = roster.snapshot().map(agent => ({
+                        ...agent,
+                        work: workView(tasks, agent.name, agent.runtime?.waitReason, observer.resources()),
+                    }));
                     return json(res, 200, {
                         session,
+                        modelCatalogVersion: catalog.snapshot().version,
                         access: access.snapshot(),
                         capturedAt: new Date().toISOString(),
                         server: { host: mcHost, port: mcPort, ...(serverRules?.snapshot() ?? { available: false }) },
                         agents: snapshot,
-                        work: workView(tasks),
+                        work: workView(tasks, null, null, observer.resources()),
                         participants: observer.participants(),
                         usage: ledger.totals(null, session),
                         lifetimeUsage: ledger.totals(null),
@@ -286,6 +291,7 @@ export async function createCompanionController({
                 if (!res.headersSent) json(res, 400, { error: String(error.message).slice(0, 300) });
             }
         });
+        hostModels.attach(server, access, catalog);
         server.requestTimeout = 20000;
         await new Promise((resolveListen, reject) => {
             server.once('error', reject);
@@ -328,6 +334,7 @@ export async function createCompanionController({
                 closing = true;
                 clearInterval(poll);
                 await changes;
+                hostModels.close();
                 await manager.close();
                 await new Promise(resolveClose => server.close(resolveClose));
                 observer.close();
@@ -336,6 +343,7 @@ export async function createCompanionController({
         };
     } catch (error) {
         clearInterval(poll);
+        hostModels.close();
         await manager?.close();
         if (server?.listening) await new Promise(done => server.close(done));
         observer?.close();

@@ -218,3 +218,38 @@ test('public game-chat copies share one plan; an old delivery cannot resurrect a
     });
     assert.notEqual(next.goal.id, one.goal.id);
 });
+
+test('container receipts share the mailbox event log, remain outside conversation and survive reopen', t => {
+    const f = fixture(t);
+    const at = { x: 4, y: 65, z: 7 };
+    f.first.observeContainer({ dimension: 'overworld', chest: at, contents: { oak_log: 12 } });
+    assert.equal(f.second.work().resources[0].contents.oak_log, 12);
+    assert.equal(f.second.work().resources[0].observer, 'First');
+    f.second.observeContainer({ dimension: 'overworld', chest: at, contents: { oak_log: 4, stick: 2 } });
+    assert.equal(f.open('Third').work().resources.length, 1);
+    assert.deepEqual(f.first.resources()[0].contents, { oak_log: 4, stick: 2 });
+    const observer = new MailboxObserver(f.file);
+    assert.equal(observer.messages().messages.length, 0);
+    assert.throws(() => f.first.sendDM('Second', 'fake receipt', { type: 'observation' }), /Invalid/);
+    assert.equal(f.first.readDMs('', 0).messages.length, 0);
+    assert.equal(f.first.unreadMessages().length, 0);
+    assert.equal(observer.tasks().length, 0);
+    observer.close();
+});
+test('closed children prompt parent verification and each agent sees its own scope and blockers', t => {
+    const f = fixture(t);
+    const goal = f.planner.createTask({ kind: 'goal', title: 'Project' });
+    const task = f.planner.createTask({
+        goalId: goal.id,
+        title: 'Work',
+        assignedTo: 'First',
+        scope: 'Keep the nearby house intact',
+    });
+    const claimed = update(f.first, task, 'claimed');
+    assert.equal(f.first.work().current[0].scope, 'Keep the nearby house intact');
+    const blocked = update(f.first, claimed, 'blocked', { note: 'Need logs' });
+    assert.equal(f.second.work().blocked.length, 0);
+    update(f.first, blocked, 'completed');
+    assert.equal(f.second.work().goals[0].readyForVerification, true);
+    assert.match(f.second.work().waitingReason, /verify the goal/);
+});

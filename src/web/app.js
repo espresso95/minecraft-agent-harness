@@ -98,8 +98,18 @@ function choose(name) {
 async function refresh() {
     if (!session) return;
     const version = ++refreshVersion;
-    if (!catalog) catalog = await call('GET', '/v1/models');
-    const next = await call('GET', '/v1/state');
+    let next;
+    try {
+        next = await call('GET', '/v1/state');
+    } catch (error) {
+        if (version === refreshVersion) {
+            state = null;
+            display();
+        }
+        throw error;
+    }
+    if (version !== refreshVersion) return;
+    if (!catalog || catalog.version !== next.modelCatalogVersion) catalog = await call('GET', '/v1/models');
     if (version !== refreshVersion) return;
     state = next;
     if (selected && !agent()) {

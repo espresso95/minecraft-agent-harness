@@ -55,3 +55,34 @@ test('preflight and a real Pi session share the subscription credential store', 
         await rm(root, { recursive: true, force: true });
     }
 });
+
+test('Claude Code uses native host authentication in preflight and rejects API overrides', async () => {
+    const model = { provider: 'claude-code', id: 'discovered-model' };
+    assert.equal(subscriptionProblem({}, model), null);
+    assert.match(subscriptionProblem({}, model, 'SYNTHETIC'), /API keys/);
+    assert.match(subscriptionProblem({}, { ...model, baseUrl: 'https://example.invalid' }), /alternate/);
+    const root = await mkdtemp(join(tmpdir(), 'native-preflight-'));
+    try {
+        assert.equal(
+            await checkModel(
+                { model, authPath: join(root, 'auth.json'), subscriptionOnly: true },
+                {
+                    modelRequest: async () => [
+                        {
+                            value: 'model',
+                            resolvedModel: 'discovered-model',
+                            contextWindow: 1000000,
+                            maxTokens: 128000,
+                            displayName: 'Model',
+                            supportsEffort: true,
+                            supportedEffortLevels: ['medium'],
+                        },
+                    ],
+                },
+            ),
+            null,
+        );
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});

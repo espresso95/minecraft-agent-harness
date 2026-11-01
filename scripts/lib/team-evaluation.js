@@ -2,7 +2,6 @@ import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import nbt from 'prismarine-nbt';
-import mojangson from 'mojangson';
 import { Vec3 } from 'vec3';
 import { createGameTools } from '../../src/tools/game-tools.js';
 
@@ -88,17 +87,30 @@ export async function playerInventories(serverDir, profiles) {
     }
     return result;
 }
-export function parseContainerItems(reply) {
-    const separator = reply.indexOf(': ');
-    if (separator < 0) throw Error('Container audit did not return NBT data');
-    const items = mojangson.simplify(mojangson.parse(reply.slice(separator + 2).trim()));
-    if (!Array.isArray(items)) throw Error('Container audit returned invalid item data');
-    return items.map(item => {
-        const count = item.count ?? item.Count;
-        if (typeof item.id !== 'string' || !Number.isSafeInteger(count) || count < 0)
+// /data pretty-prints long lists with an ellipsis. Read only the scalar fields
+// required by the audit, so component data and output limits cannot hide stock.
+export async function readContainerItems(command, at) {
+    const items = [];
+    const value = reply => {
+        const separator = reply.indexOf(': ');
+        if (separator < 0) throw Error('Container audit did not return a value');
+        try {
+            return JSON.parse(reply.slice(separator + 2));
+        } catch {
+            throw Error('Container audit returned an invalid or truncated value');
+        }
+    };
+    for (let index = 0; index < 256; index++) {
+        const base = `data get block ${at.join(' ')} Items[${index}]`;
+        const reply = await command(base + '.id');
+        if (/^Found no elements matching/.test(reply)) return items;
+        const id = value(reply),
+            count = value(await command(base + '.count'));
+        if (typeof id !== 'string' || !Number.isSafeInteger(count) || count < 1)
             throw Error('Container audit returned an invalid item');
-        return { name: item.id.replace(/^minecraft:/, ''), count };
-    });
+        items.push({ name: id.replace(/^minecraft:/, ''), count });
+    }
+    throw Error('Container audit exceeded the item limit');
 }
 export async function auditWorld({ bot, scenario, command, profiles, serverDir }) {
     const cells = new Map();
@@ -124,7 +136,7 @@ export async function auditWorld({ bot, scenario, command, profiles, serverDir }
         if (b?.name === c.name) {
             // The independent inspector reads server data. A blocked lid must not
             // prevent auditing contents or require changing the agents' world.
-            items = parseContainerItems(await command(`data get block ${c.at.join(' ')} Items`));
+            items = await readContainerItems(command, c.at);
         }
         containers.push({
             ...c,
@@ -169,7 +181,7 @@ const bodyNames = () => {
         };
     return new Set(
         createGameTools({ bot })
-            .filter(t => t.body)
+            .filter(t => t.body === true)
             .map(t => t.name),
     );
 };

@@ -1,0 +1,19 @@
+{
+  "objective": "Together, set up a small shared supply station in this peaceful survival test world. Start with empty inventories and gather/craft everything. Stay inside the glass boundary. Place a chest at (8,65,-4) and a crafting table at (9,65,-4). Deposit at least 16 raw oak logs and two wooden pickaxes into that chest, then independently inspect and verify its contents. Choose your own plan, useful batches and material handoffs. Keep existing terrain and builds intact except natural resource gathering and those two station blocks. Do not build a cabin. If finished early, verify the station and wait for further instructions; report honestly rather than claiming unverified delivery.",
+  "blockChecks": [
+    { "label": "Supply chest", "name": "chest", "positions": [[8, 65, -4]] },
+    { "label": "Crafting table", "name": "crafting_table", "positions": [[9, 65, -4]] }
+  ],
+  "containers": [
+    {
+      "label": "Verified supply contents",
+      "name": "chest",
+      "at": [8, 65, -4],
+      "items": [
+        { "name": "oak_log", "minimum": 16 },
+        { "name": "wooden_pickaxe", "minimum": 2 }
+      ]
+    }
+  ],
+  "inventoryChecks": []
+}
